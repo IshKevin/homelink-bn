@@ -6,6 +6,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     container_name: homelink-api
+    command: ["npm", "run", "dev"]
     ports:
       - "3000:3000"
     env_file:
@@ -14,6 +15,18 @@ services:
       - postgres
       - redis
       - minio
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: homelink-worker
+    command: ["npm", "run", "worker"]
+    env_file:
+      - ../.env
+    depends_on:
+      - postgres
+      - redis
 
   postgres:
     image: postgres:16

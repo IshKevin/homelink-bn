@@ -1,0 +1,187 @@
+import { faker } from "@faker-js/faker";
+import { db } from "../../src/database";
+import { invoices, leases, maintenanceRequests, properties, users } from "../../src/database/schema";
+import { hashPassword } from "../../src/common/utils/password.util";
+import { signAccessToken } from "../../src/common/utils/jwt.util";
+
+export type UserRole = "tenant" | "owner" | "agent" | "admin";
+
+export interface CreateUserOverrides {
+    email?: string;
+    role?: UserRole;
+    password?: string;
+    isApproved?: boolean;
+    isVerified?: boolean;
+}
+
+export async function createUser(overrides: CreateUserOverrides = {}) {
+    const password = overrides.password ?? "Password123!";
+    const passwordHash = await hashPassword(password);
+    const [user] = await db
+        .insert(users)
+        .values({
+            email: overrides.email ?? faker.internet.email().toLowerCase(),
+            passwordHash,
+            role: overrides.role ?? "tenant",
+            firstName: faker.person.firstName(),
+            lastName: faker.person.lastName(),
+            isApproved: overrides.isApproved ?? true,
+            isVerified: overrides.isVerified ?? true
+        })
+        .returning();
+
+    if (!user) throw new Error("Failed to create test user");
+    return { user, password };
+}
+
+export function tokenFor(user: { id: string; role: string; email: string }): string {
+    return signAccessToken({ sub: user.id, role: user.role, email: user.email });
+}
+
+export async function createAuthedUser(overrides: CreateUserOverrides = {}) {
+    const { user, password } = await createUser(overrides);
+    const accessToken = tokenFor(user);
+    return { user, password, accessToken };
+}
+
+export interface CreatePropertyOverrides {
+    ownerId: string;
+    agentId?: string | null;
+    title?: string;
+    description?: string;
+    type?: "apartment" | "house" | "studio" | "condo" | "commercial" | "other";
+    addressLine?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    postalCode?: string;
+    bedrooms?: number;
+    bathrooms?: number;
+    rentAmount?: number;
+    rentConditions?: string;
+    status?: "available" | "occupied";
+    approvalStatus?: "pending" | "approved" | "rejected";
+    isActive?: boolean;
+}
+
+export async function createProperty(overrides: CreatePropertyOverrides) {
+    const [property] = await db
+        .insert(properties)
+        .values({
+            ownerId: overrides.ownerId,
+            agentId: overrides.agentId ?? undefined,
+            title: overrides.title ?? faker.lorem.words(3),
+            description: overrides.description ?? faker.lorem.sentence(),
+            type: overrides.type ?? "apartment",
+            addressLine: overrides.addressLine ?? faker.location.streetAddress(),
+            city: overrides.city ?? faker.location.city(),
+            state: overrides.state ?? faker.location.state(),
+            country: overrides.country ?? faker.location.country(),
+            postalCode: overrides.postalCode ?? faker.location.zipCode(),
+            bedrooms: overrides.bedrooms !== undefined ? String(overrides.bedrooms) : "2",
+            bathrooms: overrides.bathrooms !== undefined ? String(overrides.bathrooms) : "1",
+            rentAmount: overrides.rentAmount !== undefined ? String(overrides.rentAmount) : "1000",
+            rentConditions: overrides.rentConditions,
+            status: overrides.status ?? "available",
+            approvalStatus: overrides.approvalStatus ?? "pending",
+            isActive: overrides.isActive ?? true
+        })
+        .returning();
+
+    if (!property) throw new Error("Failed to create test property");
+    return property;
+}
+
+export interface CreateLeaseOverrides {
+    propertyId: string;
+    tenantId: string;
+    ownerId: string;
+    startDate?: string;
+    endDate?: string;
+    rentAmount?: number;
+    status?: "draft" | "pending_signatures" | "active" | "pending_renewal" | "pending_termination" | "terminated" | "expired";
+    documentUrl?: string | null;
+    tenantSignedAt?: Date | null;
+    ownerSignedAt?: Date | null;
+    terminatedAt?: Date | null;
+}
+
+export async function createLease(overrides: CreateLeaseOverrides) {
+    const [lease] = await db
+        .insert(leases)
+        .values({
+            propertyId: overrides.propertyId,
+            tenantId: overrides.tenantId,
+            ownerId: overrides.ownerId,
+            startDate: overrides.startDate ?? "2026-01-01",
+            endDate: overrides.endDate ?? "2026-12-31",
+            rentAmount: overrides.rentAmount !== undefined ? String(overrides.rentAmount) : "1000",
+            status: overrides.status ?? "active",
+            documentUrl: overrides.documentUrl ?? undefined,
+            tenantSignedAt: overrides.tenantSignedAt ?? undefined,
+            ownerSignedAt: overrides.ownerSignedAt ?? undefined,
+            terminatedAt: overrides.terminatedAt ?? undefined
+        })
+        .returning();
+
+    if (!lease) throw new Error("Failed to create test lease");
+    return lease;
+}
+
+export interface CreateInvoiceOverrides {
+    leaseId: string;
+    period?: string;
+    amountDue?: string | number;
+    dueDate?: string;
+    status?: "unpaid" | "paid" | "overdue";
+}
+
+export async function createInvoice(overrides: CreateInvoiceOverrides) {
+    const [invoice] = await db
+        .insert(invoices)
+        .values({
+            leaseId: overrides.leaseId,
+            period: overrides.period ?? "2026-01",
+            amountDue: overrides.amountDue !== undefined ? String(overrides.amountDue) : "1200.00",
+            dueDate: overrides.dueDate ?? "2026-01-01",
+            status: overrides.status ?? "unpaid"
+        })
+        .returning();
+
+    if (!invoice) throw new Error("Failed to create test invoice");
+    return invoice;
+}
+
+export interface CreateMaintenanceRequestOverrides {
+    propertyId: string;
+    tenantId: string;
+    title?: string;
+    description?: string;
+    status?: "submitted" | "assigned" | "in_progress" | "completed";
+    assignedTo?: string | null;
+    itemsCost?: number | null;
+    laborCost?: number | null;
+    completionNotes?: string | null;
+    completedAt?: Date | null;
+}
+
+export async function createMaintenanceRequest(overrides: CreateMaintenanceRequestOverrides) {
+    const [request] = await db
+        .insert(maintenanceRequests)
+        .values({
+            propertyId: overrides.propertyId,
+            tenantId: overrides.tenantId,
+            title: overrides.title ?? faker.lorem.words(4),
+            description: overrides.description ?? faker.lorem.sentence(),
+            status: overrides.status ?? "submitted",
+            assignedTo: overrides.assignedTo ?? undefined,
+            itemsCost: overrides.itemsCost !== undefined && overrides.itemsCost !== null ? String(overrides.itemsCost) : undefined,
+            laborCost: overrides.laborCost !== undefined && overrides.laborCost !== null ? String(overrides.laborCost) : undefined,
+            completionNotes: overrides.completionNotes ?? undefined,
+            completedAt: overrides.completedAt ?? undefined
+        })
+        .returning();
+
+    if (!request) throw new Error("Failed to create test maintenance request");
+    return request;
+}

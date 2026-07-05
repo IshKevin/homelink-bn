@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
-import { createAuthedUser, createLease, createProperty, createUser } from "../../../../tests/helpers/factories";
+import { createAuthedUser, createLease, createProperty } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
 import { properties } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";

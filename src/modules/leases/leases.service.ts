@@ -488,16 +488,33 @@ export async function updateMoveRequestChecklist(moveRequestId: string, requeste
     const [moveRequest] = await db.select().from(moveRequests).where(eq(moveRequests.id, moveRequestId)).limit(1);
     if (!moveRequest) throw AppError.notFound("Move request not found");
 
+    if (moveRequest.status === "completed") {
+        throw AppError.conflict("Move request is already completed");
+    }
+
     const lease = await getLeaseOrThrow(moveRequest.leaseId);
     assertLeaseParty(lease, requester);
 
-    const newStatus: "pending" | "in_progress" = checklist.some((item) => item.done) ? "in_progress" : "pending";
+    const allDone = checklist.length > 0 && checklist.every((item) => item.done);
+    const anyDone = checklist.some((item) => item.done);
 
-    const [updated] = await db
-        .update(moveRequests)
-        .set({ checklist, status: newStatus, updatedAt: new Date() })
-        .where(eq(moveRequests.id, moveRequestId))
-        .returning();
+    // Move-in has no landlord inspection step (unlike move-out), so a fully
+    // checked-off checklist is what closes it out.
+    const isMoveInCompletion = moveRequest.type === "move_in" && allDone;
+    const newStatus: "pending" | "in_progress" | "completed" = isMoveInCompletion
+        ? "completed"
+        : anyDone
+          ? "in_progress"
+          : "pending";
+
+    const now = new Date();
+    const updates: Partial<typeof moveRequests.$inferInsert> = { checklist, status: newStatus, updatedAt: now };
+    if (isMoveInCompletion) {
+        updates.completedBy = requester.id;
+        updates.completedAt = now;
+    }
+
+    const [updated] = await db.update(moveRequests).set(updates).where(eq(moveRequests.id, moveRequestId)).returning();
 
     if (!updated) throw AppError.internal("Failed to update move request checklist");
 
@@ -507,6 +524,16 @@ export async function updateMoveRequestChecklist(moveRequestId: string, requeste
         entity: "move_request",
         entityId: moveRequestId
     });
+
+    if (isMoveInCompletion) {
+        await notify({
+            userId: lease.ownerId,
+            type: "movein.completed",
+            title: "Move-in completed",
+            message: "Your tenant has completed the move-in checklist.",
+            sendEmail: true
+        });
+    }
 
     return updated;
 }

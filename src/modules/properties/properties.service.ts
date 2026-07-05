@@ -68,6 +68,13 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
         }
         ownerId = creator.id;
     } else if (creator.role === "agent" || creator.role === "admin") {
+        if (creator.role === "agent") {
+            const [agent] = await db.select().from(users).where(eq(users.id, creator.id)).limit(1);
+            if (!agent || !agent.isApproved) {
+                throw AppError.forbidden("Your agent account must be approved by an administrator before you can list properties");
+            }
+        }
+
         if (!input.ownerId) {
             throw AppError.badRequest("ownerId is required when creating a property on behalf of an owner");
         }

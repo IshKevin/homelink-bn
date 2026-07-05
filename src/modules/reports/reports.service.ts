@@ -332,13 +332,17 @@ export async function getRevenuePerformanceReport(requester: Requester, { from, 
 /* Agent performance                                                           */
 /* -------------------------------------------------------------------------- */
 
-export async function getAgentPerformanceReport(_admin: Requester, _range: ReportDateRangeInput): Promise<ReportResult> {
+export async function getAgentPerformanceReport(_admin: Requester, range: ReportDateRangeInput): Promise<ReportResult> {
+    const { start, end } = resolveDateRange(range.from, range.to);
     const agents = await db.select().from(users).where(eq(users.role, "agent"));
 
     const reportRows: Record<string, unknown>[] = [];
 
     for (const agent of agents) {
-        const managedProperties = await db.select().from(properties).where(eq(properties.agentId, agent.id));
+        const managedProperties = await db
+            .select()
+            .from(properties)
+            .where(and(eq(properties.agentId, agent.id), gte(properties.createdAt, start), lte(properties.createdAt, end)));
 
         const approvedListings = managedProperties.filter((p) => p.approvalStatus === "approved").length;
         const rejectedListings = managedProperties.filter((p) => p.approvalStatus === "rejected").length;

@@ -73,6 +73,18 @@ describe("Properties module", () => {
 
             expect(res.status).toBe(403);
         });
+
+        it("rejects an unapproved agent from creating a property", async () => {
+            const { accessToken } = await createAuthedUser({ role: "agent", isApproved: false });
+            const { user: owner } = await createUser({ role: "owner" });
+
+            const res = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ ...validPropertyPayload, ownerId: owner.id });
+
+            expect(res.status).toBe(403);
+        });
     });
 
     describe("PATCH /api/v1/properties/:id", () => {

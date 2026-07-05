@@ -6,8 +6,9 @@ import {
     createMaintenanceRequest,
     createProperty
 } from "../../../../tests/helpers/factories";
+import { eq } from "drizzle-orm";
 import { db } from "../../../database";
-import { payments } from "../../../database/schema";
+import { payments, properties } from "../../../database/schema";
 
 jest.mock("../../../services/email.service", () => ({
     sendMail: jest.fn().mockResolvedValue(undefined)
@@ -270,6 +271,25 @@ describe("Reports module", () => {
                 .get("/api/v1/reports/agent-performance")
                 .set("Authorization", `Bearer ${agentToken}`);
             expect(agentSelfRes.status).toBe(403);
+        });
+
+        it("only counts listings created inside the requested date range", async () => {
+            const { user: agent } = await createAuthedUser({ role: "agent" });
+            const { user: owner } = await createAuthedUser({ role: "owner" });
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+
+            const inRange = await createProperty({ ownerId: owner.id, agentId: agent.id, approvalStatus: "approved" });
+            const outOfRange = await createProperty({ ownerId: owner.id, agentId: agent.id, approvalStatus: "approved" });
+            await db.update(properties).set({ createdAt: new Date("2020-01-15") }).where(eq(properties.id, outOfRange.id));
+
+            const res = await testRequest()
+                .get("/api/v1/reports/agent-performance?from=2026-01-01&to=2026-12-31")
+                .set("Authorization", `Bearer ${adminToken}`);
+
+            expect(res.status).toBe(200);
+            const agentRow = res.body.data.rows.find((r: { Agent: string }) => r.Agent === `${agent.firstName} ${agent.lastName}`);
+            expect(agentRow.PropertiesManaged).toBe(1);
+            expect(inRange.id).not.toBe(outOfRange.id);
         });
     });
 });

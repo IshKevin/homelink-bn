@@ -104,6 +104,48 @@ describe("Leases module", () => {
         });
     });
 
+    describe("Move-in requests", () => {
+        it("marks the auto-created move-in request completed once every checklist item is done", async () => {
+            const { owner, ownerToken, tenant, tenantToken, property } = await setupOwnerTenantProperty();
+            const lease = await createLease({
+                propertyId: property.id,
+                tenantId: tenant.id,
+                ownerId: owner.id,
+                status: "pending_signatures"
+            });
+
+            await testRequest().post(`/api/v1/leases/${lease.id}/sign`).set("Authorization", `Bearer ${tenantToken}`);
+            await testRequest().post(`/api/v1/leases/${lease.id}/sign`).set("Authorization", `Bearer ${ownerToken}`);
+
+            const moveRequestsRes = await testRequest()
+                .get(`/api/v1/leases/${lease.id}/move-requests`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            const moveIn = moveRequestsRes.body.data.find((m: { type: string }) => m.type === "move_in");
+            const checklist = moveIn.checklist.map((item: { label: string }) => ({ label: item.label, done: true }));
+
+            const partialRes = await testRequest()
+                .patch(`/api/v1/leases/move-requests/${moveIn.id}/checklist`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ checklist: [{ ...checklist[0], done: true }, ...checklist.slice(1).map((c: object) => ({ ...c, done: false }))] });
+            expect(partialRes.status).toBe(200);
+            expect(partialRes.body.data.status).toBe("in_progress");
+
+            const completeRes = await testRequest()
+                .patch(`/api/v1/leases/move-requests/${moveIn.id}/checklist`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ checklist });
+            expect(completeRes.status).toBe(200);
+            expect(completeRes.body.data.status).toBe("completed");
+            expect(completeRes.body.data.completedAt).toBeTruthy();
+
+            const reopenRes = await testRequest()
+                .patch(`/api/v1/leases/move-requests/${moveIn.id}/checklist`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ checklist });
+            expect(reopenRes.status).toBe(409);
+        });
+    });
+
     describe("GET /api/v1/leases/:id", () => {
         it("allows the tenant to view their lease but forbids an unrelated tenant", async () => {
             const { owner, tenant, tenantToken, property } = await setupOwnerTenantProperty();

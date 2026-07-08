@@ -17,39 +17,57 @@ export function getApiServers(basePath = ""): ApiServer[] {
     return servers;
 }
 
-function samePublicHost(port: number): string | null {
+function isLocalHost(): boolean {
     try {
-        const { protocol, hostname } = new URL(env.appUrl);
-        return `${protocol}//${hostname}:${port}`;
+        const { hostname } = new URL(env.appUrl);
+        return hostname === "localhost" || hostname === "127.0.0.1";
     } catch {
-        return null;
+        return false;
     }
 }
+
+// minio/mailpit's admin ports are bound to the host's loopback only (see docker-compose.yml),
+// so on a remote box they're only reachable via `ssh -L <port>:localhost:<port> user@host`,
+// after which you browse to localhost on your OWN machine — not the server's public host.
+const TUNNEL_NOTE =
+    "Not publicly reachable. Tunnel first: ssh -L PORT:localhost:PORT user@your-server, then open this URL on your machine.";
 
 export interface ImageServerInfo {
     endpoint: string;
     bucket: string;
     console: string | null;
+    note?: string;
 }
 
 export function getImageServer(): ImageServerInfo {
     const selfHosted = env.s3.endpoint.includes("minio");
+    if (!selfHosted) {
+        return { endpoint: env.s3.endpoint, bucket: env.s3.bucket, console: null };
+    }
+
     return {
         endpoint: env.s3.endpoint,
         bucket: env.s3.bucket,
-        console: selfHosted ? samePublicHost(9001) : null
+        console: "http://localhost:9001",
+        ...(isLocalHost() ? {} : { note: TUNNEL_NOTE.replaceAll("PORT", "9001") })
     };
 }
 
 export interface EmailServerInfo {
     host: string;
     webUI: string | null;
+    note?: string;
 }
 
 export function getEmailServer(): EmailServerInfo {
     const selfHosted = env.smtp.host.includes("mailpit");
+    if (!selfHosted) {
+        return { host: env.smtp.host, webUI: null };
+    }
+
     return {
         host: env.smtp.host,
-        webUI: selfHosted ? samePublicHost(8025) : null
+        webUI: "http://localhost:8025",
+        ...(isLocalHost() ? {} : { note: TUNNEL_NOTE.replaceAll("PORT", "8025") })
     };
 }

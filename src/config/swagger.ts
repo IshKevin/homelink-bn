@@ -13,7 +13,12 @@ const options: swaggerJsdoc.Options = {
                 "and administrators. This document covers accounts, listings, leases, payments, maintenance, " +
                 "notifications, dashboards, reports, and admin operations."
         },
-        servers: [{ url: `${env.appUrl}/api/v1`, description: `${env.nodeEnv} server` }],
+        servers: [
+            { url: `${env.appUrl}/api/v1`, description: `${env.nodeEnv} server` },
+            ...(env.appUrl !== "https://homelink-bn.onrender.com"
+                ? [{ url: "https://homelink-bn.onrender.com/api/v1", description: "Production server" }]
+                : [])
+        ],
         components: {
             securitySchemes: {
                 bearerAuth: {

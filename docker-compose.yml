@@ -53,6 +53,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        IMAGE_TAG: ${IMAGE_TAG:-local}
     container_name: homelink-migrate
     command: ["npm", "run", "db:migrate"]
     env_file:
@@ -68,6 +72,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        IMAGE_TAG: ${IMAGE_TAG:-local}
     container_name: homelink-seed-admin
     command: ["npm", "run", "seed:admin"]
     env_file:
@@ -81,6 +89,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        IMAGE_TAG: ${IMAGE_TAG:-local}
     container_name: homelink-api
     restart: unless-stopped
     ports:
@@ -101,6 +113,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        IMAGE_TAG: ${IMAGE_TAG:-local}
     container_name: homelink-worker
     restart: unless-stopped
     command: ["npm", "run", "start:worker"]

@@ -32,5 +32,13 @@ export const env = {
         user: process.env.SMTP_USER || "",
         pass: process.env.SMTP_PASS || "",
         from: process.env.SMTP_FROM || "HomeLink <no-reply@homelink.local>"
-    }
+    },
+
+    build: {
+        gitCommit: process.env.GIT_COMMIT || "unknown",
+        builtAt: process.env.BUILD_TIME || "unknown",
+        imageTag: process.env.IMAGE_TAG || "local"
+    },
+
+    adminEmail: process.env.ADMIN_EMAIL || undefined
 };

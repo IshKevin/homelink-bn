@@ -1,6 +1,6 @@
 import path from "node:path";
 import swaggerJsdoc from "swagger-jsdoc";
-import { env } from "./env";
+import { getApiServers } from "./servers";
 
 const options: swaggerJsdoc.Options = {
     definition: {
@@ -13,12 +13,7 @@ const options: swaggerJsdoc.Options = {
                 "and administrators. This document covers accounts, listings, leases, payments, maintenance, " +
                 "notifications, dashboards, reports, and admin operations."
         },
-        servers: [
-            { url: `${env.appUrl}/api/v1`, description: `${env.nodeEnv} server` },
-            ...(env.appUrl !== "https://homelink-bn.onrender.com"
-                ? [{ url: "https://homelink-bn.onrender.com/api/v1", description: "Production server" }]
-                : [])
-        ],
+        servers: getApiServers("/api/v1"),
         components: {
             securitySchemes: {
                 bearerAuth: {

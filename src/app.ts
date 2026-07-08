@@ -10,7 +10,7 @@ import routes from "./routes";
 import { logger } from "./config/logger";
 import { swaggerSpec } from "./config/swagger";
 import { env } from "./config/env";
-import { getApiServers } from "./config/servers";
+import { getApiServers, getEmailServer, getImageServer } from "./config/servers";
 import { apiRateLimiter } from "./common/middlewares/rateLimiter.middleware";
 import { errorHandler, notFoundHandler } from "./common/middlewares/error.middleware";
 import { sendSuccess } from "./common/utils/response.util";
@@ -37,7 +37,9 @@ app.get("/", (_req, res) => {
             health: "/api/v1/health",
             servers: getApiServers("/api/v1"),
             build: env.build,
-            admin: env.adminEmail ? { email: env.adminEmail } : null
+            admin: env.adminEmail ? { email: env.adminEmail } : null,
+            image: getImageServer(),
+            email: getEmailServer()
         }
     });
 });

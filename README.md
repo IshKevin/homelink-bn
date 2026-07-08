@@ -99,6 +99,11 @@ API docs (Swagger UI): **http://localhost:3000/api-docs**
 Raw OpenAPI spec: **http://localhost:3000/api-docs.json**
 Health check: **http://localhost:3000/api/v1/health**
 
+### Production
+
+- API base: **https://homelink-bn.onrender.com/api/v1**
+- Swagger UI: **https://homelink-bn.onrender.com/api-docs**
+
 ## Available scripts
 
 | Script | Purpose |

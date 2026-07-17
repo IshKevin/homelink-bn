@@ -23,6 +23,7 @@ describe("Auth module", () => {
                 password: "Password123!",
                 firstName: "Jane",
                 lastName: "Doe",
+                phone: "0788123456",
                 role: "tenant"
             });
 
@@ -40,6 +41,7 @@ describe("Auth module", () => {
                 password: "Password123!",
                 firstName: "Alex",
                 lastName: "Agent",
+                phone: "0788123457",
                 role: "agent"
             });
 
@@ -68,6 +70,7 @@ describe("Auth module", () => {
                 password: "Password123!",
                 firstName: "Jane",
                 lastName: "Doe",
+                phone: "0788123458",
                 role: "tenant"
             });
 

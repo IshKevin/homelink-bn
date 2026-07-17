@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { format } from "date-fns";
 import { db } from "../../database";
@@ -9,6 +10,7 @@ import { buildObjectKey, getPresignedDownloadUrl, uploadBuffer } from "../../ser
 import { buildExcelBuffer, type ExcelColumn } from "../../services/excel.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
+import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
@@ -28,14 +30,21 @@ export interface ListPaymentsFilters {
 }
 
 export interface PayInvoiceInput {
-    method: "mobile_money" | "bank_transfer";
+    method: "mobile_money" | "bank_transfer" | "cash";
     payerPhone?: string | undefined;
     payerAccount?: string | undefined;
 }
 
-function assertInvoiceAccess(lease: LeaseRow, requester: Requester): void {
-    if (requester.role === "admin" || requester.id === lease.tenantId || requester.id === lease.ownerId) return;
+async function assertInvoiceAccess(lease: LeaseRow, requester: Requester): Promise<void> {
+    if (isAdminRole(requester.role) || requester.id === lease.tenantId || requester.id === lease.ownerId) return;
+    if (requester.role === "house_manager" && lease.ownerId === (await resolveEffectiveOwnerId(requester))) return;
     throw AppError.forbidden("You do not have permission to access this invoice");
+}
+
+async function assertLeaseOwnerAccess(lease: LeaseRow, requester: Requester): Promise<void> {
+    if (isAdminRole(requester.role) || requester.id === lease.ownerId) return;
+    if (requester.role === "house_manager" && lease.ownerId === (await resolveEffectiveOwnerId(requester))) return;
+    throw AppError.forbidden("You do not have permission to act on this payment");
 }
 
 async function getInvoiceWithLeaseOrThrow(invoiceId: string): Promise<{ invoice: InvoiceRow; lease: LeaseRow }> {
@@ -94,6 +103,8 @@ export async function listInvoices(
         conditions.push(eq(leases.tenantId, requester.id));
     } else if (requester.role === "owner") {
         conditions.push(eq(leases.ownerId, requester.id));
+    } else if (requester.role === "house_manager") {
+        conditions.push(eq(leases.ownerId, await resolveEffectiveOwnerId(requester)));
     }
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -118,8 +129,52 @@ export async function listInvoices(
 
 export async function getInvoiceById(invoiceId: string, requester: Requester) {
     const { invoice, lease } = await getInvoiceWithLeaseOrThrow(invoiceId);
-    assertInvoiceAccess(lease, requester);
+    await assertInvoiceAccess(lease, requester);
     return invoice;
+}
+
+async function markPaymentSuccess(paymentId: string): Promise<PaymentRow> {
+    const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+    if (!payment) throw AppError.notFound("Payment not found");
+
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, payment.invoiceId)).limit(1);
+    if (!invoice) throw AppError.notFound("Invoice not found");
+
+    const html = buildReceiptHtml(payment, invoice);
+    const buffer = await renderHtmlToPdf(html);
+    const key = buildObjectKey("receipts", `${payment.id}.pdf`);
+    await uploadBuffer(key, buffer, "application/pdf");
+
+    const now = new Date();
+    const [updated] = await db
+        .update(payments)
+        .set({ status: "success", receiptUrl: key, paidAt: now })
+        .where(eq(payments.id, payment.id))
+        .returning();
+    await db.update(invoices).set({ status: "paid", updatedAt: now }).where(eq(invoices.id, invoice.id));
+
+    const [lease] = await db.select().from(leases).where(eq(leases.id, invoice.leaseId)).limit(1);
+
+    await notify({
+        userId: payment.tenantId,
+        type: "payment.success",
+        title: "Payment successful",
+        message: `Your payment of ${invoice.amountDue} for invoice period ${invoice.period} was successful.`,
+        metadata: { invoiceId: invoice.id, paymentId: payment.id },
+        sendEmail: true
+    });
+    if (lease) {
+        await notify({
+            userId: lease.ownerId,
+            type: "payment.success",
+            title: "Payment received",
+            message: `A payment of ${invoice.amountDue} was received for invoice period ${invoice.period}.`,
+            metadata: { invoiceId: invoice.id, paymentId: payment.id },
+            sendEmail: true
+        });
+    }
+
+    return updated ?? payment;
 }
 
 export async function payInvoice(invoiceId: string, tenant: Requester, input: PayInvoiceInput) {
@@ -131,6 +186,43 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
 
     if (invoice.status === "paid") {
         throw AppError.conflict("Invoice is already paid");
+    }
+
+    if (input.method === "cash" || input.method === "bank_transfer") {
+        const [payment] = await db
+            .insert(payments)
+            .values({
+                invoiceId: invoice.id,
+                tenantId: tenant.id,
+                amount: invoice.amountDue,
+                method: input.method,
+                provider: input.method,
+                providerReference: `MANUAL-${crypto.randomUUID()}`,
+                status: "pending",
+                approvalStatus: "pending"
+            })
+            .returning();
+
+        if (!payment) throw AppError.internal("Failed to create payment");
+
+        await recordAction({
+            userId: tenant.id,
+            action: "payment.initiate",
+            entity: "payment",
+            entityId: payment.id,
+            metadata: { status: payment.status, method: input.method }
+        });
+
+        await notify({
+            userId: lease.ownerId,
+            type: "payment.approval_requested",
+            title: "Payment awaiting your approval",
+            message: `A ${input.method.replace("_", " ")} payment of ${invoice.amountDue} for invoice period ${invoice.period} needs your approval.`,
+            metadata: { invoiceId: invoice.id, paymentId: payment.id },
+            sendEmail: true
+        });
+
+        return payment;
     }
 
     const provider = getPaymentProvider(input.method);
@@ -151,6 +243,7 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
             provider: provider.name,
             providerReference: result.providerReference,
             status: result.status,
+            approvalStatus: "not_required",
             failureReason: result.failureReason
         })
         .returning();
@@ -160,34 +253,7 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
     let finalPayment: PaymentRow = payment;
 
     if (result.status === "success") {
-        const html = buildReceiptHtml(payment, invoice);
-        const buffer = await renderHtmlToPdf(html);
-        const key = buildObjectKey("receipts", `${payment.id}.pdf`);
-        await uploadBuffer(key, buffer, "application/pdf");
-
-        const now = new Date();
-        await db.update(payments).set({ receiptUrl: key, paidAt: now }).where(eq(payments.id, payment.id));
-        await db.update(invoices).set({ status: "paid", updatedAt: now }).where(eq(invoices.id, invoice.id));
-
-        const [refreshed] = await db.select().from(payments).where(eq(payments.id, payment.id)).limit(1);
-        if (refreshed) finalPayment = refreshed;
-
-        await notify({
-            userId: lease.tenantId,
-            type: "payment.success",
-            title: "Payment successful",
-            message: `Your payment of ${invoice.amountDue} for invoice period ${invoice.period} was successful.`,
-            metadata: { invoiceId: invoice.id, paymentId: payment.id },
-            sendEmail: true
-        });
-        await notify({
-            userId: lease.ownerId,
-            type: "payment.success",
-            title: "Payment received",
-            message: `A payment of ${invoice.amountDue} was received for invoice period ${invoice.period}.`,
-            metadata: { invoiceId: invoice.id, paymentId: payment.id },
-            sendEmail: true
-        });
+        finalPayment = await markPaymentSuccess(payment.id);
     } else if (result.status === "failed") {
         await notify({
             userId: lease.tenantId,
@@ -210,6 +276,80 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
     return finalPayment;
 }
 
+export async function approvePayment(paymentId: string, requester: Requester) {
+    const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+    if (!payment) throw AppError.notFound("Payment not found");
+
+    const { lease } = await getInvoiceWithLeaseOrThrow(payment.invoiceId);
+    await assertLeaseOwnerAccess(lease, requester);
+
+    if (payment.approvalStatus !== "pending") {
+        throw AppError.conflict("Payment is not awaiting approval");
+    }
+
+    const now = new Date();
+    await db
+        .update(payments)
+        .set({ approvalStatus: "approved", approvedBy: requester.id, approvedAt: now })
+        .where(eq(payments.id, paymentId));
+
+    const updated = await markPaymentSuccess(paymentId);
+
+    await recordAction({
+        userId: requester.id,
+        action: "payment.approve",
+        entity: "payment",
+        entityId: paymentId
+    });
+
+    return updated;
+}
+
+export async function rejectPayment(paymentId: string, requester: Requester, reason: string) {
+    const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+    if (!payment) throw AppError.notFound("Payment not found");
+
+    const { lease, invoice } = await getInvoiceWithLeaseOrThrow(payment.invoiceId);
+    await assertLeaseOwnerAccess(lease, requester);
+
+    if (payment.approvalStatus !== "pending") {
+        throw AppError.conflict("Payment is not awaiting approval");
+    }
+
+    const [updated] = await db
+        .update(payments)
+        .set({
+            status: "failed",
+            approvalStatus: "rejected",
+            approvedBy: requester.id,
+            approvedAt: new Date(),
+            failureReason: reason
+        })
+        .where(eq(payments.id, paymentId))
+        .returning();
+
+    if (!updated) throw AppError.internal("Failed to reject payment");
+
+    await recordAction({
+        userId: requester.id,
+        action: "payment.reject",
+        entity: "payment",
+        entityId: paymentId,
+        metadata: { reason }
+    });
+
+    await notify({
+        userId: payment.tenantId,
+        type: "payment.rejected",
+        title: "Payment rejected",
+        message: `Your payment of ${invoice.amountDue} for invoice period ${invoice.period} was rejected: ${reason}`,
+        metadata: { invoiceId: invoice.id, paymentId },
+        sendEmail: true
+    });
+
+    return updated;
+}
+
 export async function listPayments(
     requester: Requester,
     filters: ListPaymentsFilters,
@@ -223,6 +363,8 @@ export async function listPayments(
         conditions.push(eq(payments.tenantId, requester.id));
     } else if (requester.role === "owner") {
         conditions.push(eq(leases.ownerId, requester.id));
+    } else if (requester.role === "house_manager") {
+        conditions.push(eq(leases.ownerId, await resolveEffectiveOwnerId(requester)));
     }
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -256,6 +398,8 @@ export async function exportPayments(requester: Requester, filters: ListPayments
         conditions.push(eq(payments.tenantId, requester.id));
     } else if (requester.role === "owner") {
         conditions.push(eq(leases.ownerId, requester.id));
+    } else if (requester.role === "house_manager") {
+        conditions.push(eq(leases.ownerId, await resolveEffectiveOwnerId(requester)));
     }
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -299,7 +443,7 @@ export async function getReceipt(paymentId: string, requester: Requester) {
 
     if (!row) throw AppError.notFound("Payment not found");
 
-    assertInvoiceAccess(row.lease, requester);
+    await assertInvoiceAccess(row.lease, requester);
 
     if (row.payment.status !== "success" || !row.payment.receiptUrl) {
         throw AppError.notFound("Receipt not available for this payment");

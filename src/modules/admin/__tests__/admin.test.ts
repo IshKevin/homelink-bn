@@ -3,10 +3,17 @@ import { testRequest } from "../../../../tests/helpers/app";
 import { createAuthedUser, createProperty, createUser } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
 import { identityVerifications, users } from "../../../database/schema";
+import * as emailService from "../../../services/email.service";
 
 jest.mock("../../../services/email.service", () => ({
     sendMail: jest.fn().mockResolvedValue(undefined)
 }));
+
+function extractToken(html: string): string {
+    const match = html.match(/token=([a-f0-9]+)/);
+    if (!match || !match[1]) throw new Error("Token not found in email html");
+    return match[1];
+}
 
 describe("Admin module", () => {
     describe("Access control", () => {
@@ -221,6 +228,99 @@ describe("Admin module", () => {
                         log.action === "admin.user.status_update" && log.entity === "user" && log.entityId === tenant.id
                 )
             ).toBe(true);
+        });
+    });
+
+    describe("POST /api/v1/admin/house-owners", () => {
+        it("creates an owner account with a 201 and emails a working set-password link", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const mockedSendMail = emailService.sendMail as jest.Mock;
+            mockedSendMail.mockClear();
+
+            const res = await testRequest()
+                .post("/api/v1/admin/house-owners")
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ email: "newowner@example.com", firstName: "New", lastName: "Owner", phone: "0788000123" });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.role).toBe("owner");
+            expect(res.body.data.passwordHash).toBeUndefined();
+            expect(mockedSendMail).toHaveBeenCalledTimes(1);
+
+            const html = mockedSendMail.mock.calls[0][0].html as string;
+            const token = extractToken(html);
+
+            const setPasswordRes = await testRequest()
+                .post("/api/v1/auth/reset-password")
+                .send({ token, newPassword: "NewOwnerPass1!" });
+            expect(setPasswordRes.status).toBe(200);
+
+            const loginRes = await testRequest()
+                .post("/api/v1/auth/login")
+                .send({ email: "newowner@example.com", password: "NewOwnerPass1!" });
+            expect(loginRes.status).toBe(200);
+        });
+
+        it("rejects a duplicate email with 409", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            await createUser({ email: "dupe-owner@example.com" });
+
+            const res = await testRequest()
+                .post("/api/v1/admin/house-owners")
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ email: "dupe-owner@example.com", firstName: "New", lastName: "Owner", phone: "0788000124" });
+
+            expect(res.status).toBe(409);
+        });
+    });
+
+    describe("Suspension requests", () => {
+        it("lets an admin approve a suspension request, deactivating the target user", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: target } = await createUser({ role: "tenant" });
+
+            const createRes = await testRequest()
+                .post("/api/v1/iam/suspension-requests")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ targetUserId: target.id, reason: "Repeated policy violations" });
+            expect(createRes.status).toBe(201);
+
+            const listRes = await testRequest()
+                .get("/api/v1/admin/suspension-requests?status=pending")
+                .set("Authorization", `Bearer ${adminToken}`);
+            expect(listRes.status).toBe(200);
+            expect(listRes.body.data.some((r: { id: string }) => r.id === createRes.body.data.id)).toBe(true);
+
+            const approveRes = await testRequest()
+                .patch(`/api/v1/admin/suspension-requests/${createRes.body.data.id}/approve`)
+                .set("Authorization", `Bearer ${adminToken}`);
+            expect(approveRes.status).toBe(200);
+            expect(approveRes.body.data.status).toBe("approved");
+
+            const [updatedUser] = await db.select().from(users).where(eq(users.id, target.id)).limit(1);
+            expect(updatedUser?.isActive).toBe(false);
+        });
+
+        it("lets an admin reject a suspension request, leaving the target user active", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: target } = await createUser({ role: "tenant" });
+
+            const createRes = await testRequest()
+                .post("/api/v1/iam/suspension-requests")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ targetUserId: target.id, reason: "Minor complaint" });
+
+            const rejectRes = await testRequest()
+                .patch(`/api/v1/admin/suspension-requests/${createRes.body.data.id}/reject`)
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ decisionNotes: "Not severe enough" });
+            expect(rejectRes.status).toBe(200);
+            expect(rejectRes.body.data.status).toBe("rejected");
+
+            const [updatedUser] = await db.select().from(users).where(eq(users.id, target.id)).limit(1);
+            expect(updatedUser?.isActive).toBe(true);
         });
     });
 });

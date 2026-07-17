@@ -15,6 +15,8 @@ export const env = {
     jwtAccessExpiry: process.env.JWT_ACCESS_EXPIRY || "15m",
     jwtRefreshExpiry: process.env.JWT_REFRESH_EXPIRY || "30d",
     bcryptSaltRounds: Number(process.env.BCRYPT_SALT_ROUNDS) || 10,
+    idleTimeoutMinutes: Number(process.env.IDLE_TIMEOUT_MINUTES) || 60,
+    newDeviceOtpTtlMinutes: Number(process.env.NEW_DEVICE_OTP_TTL_MINUTES) || 10,
 
     redisUrl: process.env.REDIS_URL!,
 

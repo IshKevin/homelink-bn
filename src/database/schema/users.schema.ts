@@ -1,7 +1,14 @@
 import { boolean, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
-export const userRoleEnum = pgEnum("user_role", ["tenant", "owner", "agent", "admin"]);
+export const userRoleEnum = pgEnum("user_role", [
+    "tenant",
+    "owner",
+    "agent",
+    "admin",
+    "superadmin",
+    "house_manager"
+]);
 export const verificationStatusEnum = pgEnum("verification_status", ["pending", "approved", "rejected"]);
 
 export const users = pgTable("users", {
@@ -11,7 +18,7 @@ export const users = pgTable("users", {
     role: userRoleEnum("role").notNull().default("tenant"),
     firstName: varchar("first_name", { length: 100 }).notNull(),
     lastName: varchar("last_name", { length: 100 }).notNull(),
-    phone: varchar("phone", { length: 30 }),
+    phone: varchar("phone", { length: 30 }).notNull(),
     avatarUrl: text("avatar_url"),
     isVerified: boolean("is_verified").notNull().default(false),
     isApproved: boolean("is_approved").notNull().default(true),
@@ -42,8 +49,24 @@ export const refreshTokens = pgTable("refresh_tokens", {
         .notNull()
         .references(() => users.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull(),
+    ipAddress: varchar("ip_address", { length: 100 }),
+    userAgent: varchar("user_agent", { length: 255 }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+});
+
+export const loginChallenges = pgTable("login_challenges", {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    ipAddress: varchar("ip_address", { length: 100 }),
+    userAgent: varchar("user_agent", { length: 255 }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 
@@ -60,5 +83,6 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
 
 export const usersRelations = relations(users, ({ many }) => ({
     identityVerifications: many(identityVerifications),
-    refreshTokens: many(refreshTokens)
+    refreshTokens: many(refreshTokens),
+    loginChallenges: many(loginChallenges)
 }));

@@ -18,6 +18,8 @@ jest.mock("../../../services/email.service", () => ({
 const validPropertyPayload = {
     title: "Cozy Apartment",
     type: "apartment",
+    category: "residential",
+    unitsCount: 4,
     addressLine: "123 Main St",
     city: "Kigali",
     country: "Rwanda",
@@ -84,6 +86,47 @@ describe("Properties module", () => {
                 .send({ ...validPropertyPayload, ownerId: owner.id });
 
             expect(res.status).toBe(403);
+        });
+
+        it("requires sizeSqm and type 'commercial' for a commercial-category property", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+
+            const missingSize = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ ...validPropertyPayload, category: "commercial", type: "commercial", unitsCount: undefined });
+            expect(missingSize.status).toBe(400);
+
+            const wrongType = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ ...validPropertyPayload, category: "commercial", type: "apartment", sizeSqm: 250 });
+            expect(wrongType.status).toBe(400);
+
+            const valid = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ ...validPropertyPayload, category: "commercial", type: "commercial", sizeSqm: 250, unitsCount: undefined });
+            expect(valid.status).toBe(201);
+            expect(valid.body.data.category).toBe("commercial");
+            expect(valid.body.data.sizeSqm).toBe("250.00");
+        });
+
+        it("requires unitsCount (doors) for a residential apartment", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+
+            const missingUnits = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ ...validPropertyPayload, category: "residential", type: "apartment", unitsCount: undefined });
+            expect(missingUnits.status).toBe(400);
+
+            const valid = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ ...validPropertyPayload, category: "residential", type: "apartment", unitsCount: 6 });
+            expect(valid.status).toBe(201);
+            expect(valid.body.data.unitsCount).toBe(6);
         });
     });
 

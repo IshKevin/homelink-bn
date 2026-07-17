@@ -2,6 +2,7 @@ import { Router } from "express";
 import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
+import { ADMIN_ROLES } from "../../common/constants/roles";
 import {
     assignMaintenanceRequestSchema,
     completeMaintenanceRequestSchema,
@@ -85,7 +86,7 @@ router.use(authenticate);
 router.post("/", authorize("tenant"), validate(createMaintenanceRequestSchema), createMaintenanceRequestHandler);
 router.get(
     "/",
-    authorize("tenant", "owner", "agent", "admin"),
+    authorize("tenant", "owner", "agent", "house_manager", ...ADMIN_ROLES),
     validate(listMaintenanceRequestsSchema),
     listMaintenanceRequestsHandler
 );
@@ -121,7 +122,7 @@ router.get(
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.get("/:id", authorize("tenant", "owner", "agent", "admin"), getMaintenanceRequestHandler);
+router.get("/:id", authorize("tenant", "owner", "agent", "house_manager", ...ADMIN_ROLES), getMaintenanceRequestHandler);
 
 /**
  * @openapi
@@ -159,7 +160,7 @@ router.get("/:id", authorize("tenant", "owner", "agent", "admin"), getMaintenanc
  */
 router.patch(
     "/:id/assign",
-    authorize("owner", "agent", "admin"),
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
     validate(assignMaintenanceRequestSchema),
     assignMaintenanceRequestHandler
 );
@@ -200,7 +201,7 @@ router.patch(
  */
 router.patch(
     "/:id/status",
-    authorize("owner", "agent", "admin"),
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
     validate(updateStatusSchema),
     updateMaintenanceRequestStatusHandler
 );
@@ -241,7 +242,7 @@ router.patch(
  */
 router.patch(
     "/:id/complete",
-    authorize("owner", "agent", "admin"),
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
     validate(completeMaintenanceRequestSchema),
     completeMaintenanceRequestHandler
 );
@@ -297,6 +298,6 @@ router.patch(
  *               $ref: '#/components/schemas/SuccessResponse'
  */
 router.post("/:id/feedback", authorize("tenant"), validate(submitFeedbackSchema), submitFeedbackHandler);
-router.get("/:id/feedback", authorize("tenant", "owner", "agent", "admin"), getFeedbackHandler);
+router.get("/:id/feedback", authorize("tenant", "owner", "agent", "house_manager", ...ADMIN_ROLES), getFeedbackHandler);
 
 export default router;

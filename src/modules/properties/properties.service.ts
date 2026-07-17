@@ -5,6 +5,7 @@ import { AppError } from "../../common/errors/AppError";
 import { buildObjectKey, deleteObject, uploadBuffer } from "../../services/storage.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
+import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
@@ -14,6 +15,9 @@ export interface CreatePropertyInput {
     title: string;
     description?: string;
     type: PropertyRow["type"];
+    category: PropertyRow["category"];
+    sizeSqm?: number;
+    unitsCount?: number;
     addressLine: string;
     city: string;
     state?: string;
@@ -30,6 +34,9 @@ export interface UpdatePropertyInput {
     title?: string;
     description?: string;
     type?: PropertyRow["type"];
+    category?: PropertyRow["category"];
+    sizeSqm?: number;
+    unitsCount?: number;
     addressLine?: string;
     city?: string;
     state?: string;
@@ -45,16 +52,21 @@ export interface UpdatePropertyInput {
 export interface ListPropertiesFilters {
     status?: PropertyRow["status"] | undefined;
     type?: PropertyRow["type"] | undefined;
+    category?: PropertyRow["category"] | undefined;
     city?: string | undefined;
     minRent?: number | undefined;
     maxRent?: number | undefined;
     ownerId?: string | undefined;
 }
 
-function assertPropertyWriteAccess(property: PropertyRow, requester: Requester) {
+async function assertPropertyWriteAccess(property: PropertyRow, requester: Requester) {
+    if (isAdminRole(requester.role)) return;
+
     const isOwner = requester.role === "owner" && property.ownerId === requester.id;
     const isAgent = requester.role === "agent" && property.agentId === requester.id;
-    if (requester.role === "admin" || isOwner || isAgent) return;
+    const isManager =
+        requester.role === "house_manager" && property.ownerId === (await resolveEffectiveOwnerId(requester));
+    if (isOwner || isAgent || isManager) return;
     throw AppError.forbidden("You do not have permission to modify this property");
 }
 
@@ -67,7 +79,9 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
             throw AppError.badRequest("Owners cannot create properties on behalf of another owner");
         }
         ownerId = creator.id;
-    } else if (creator.role === "agent" || creator.role === "admin") {
+    } else if (creator.role === "house_manager") {
+        ownerId = await resolveEffectiveOwnerId(creator);
+    } else if (creator.role === "agent" || isAdminRole(creator.role)) {
         if (creator.role === "agent") {
             const [agent] = await db.select().from(users).where(eq(users.id, creator.id)).limit(1);
             if (!agent || !agent.isApproved) {
@@ -98,6 +112,9 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
             title: input.title,
             description: input.description,
             type: input.type,
+            category: input.category,
+            sizeSqm: input.sizeSqm !== undefined ? String(input.sizeSqm) : undefined,
+            unitsCount: input.unitsCount,
             addressLine: input.addressLine,
             city: input.city,
             state: input.state,
@@ -123,13 +140,14 @@ export async function updateProperty(propertyId: string, requester: Requester, i
     const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!property) throw AppError.notFound("Property not found");
 
-    assertPropertyWriteAccess(property, requester);
+    await assertPropertyWriteAccess(property, requester);
 
-    const { bedrooms, bathrooms, rentAmount, ...rest } = input;
+    const { bedrooms, bathrooms, rentAmount, sizeSqm, ...rest } = input;
     const updates: Partial<typeof properties.$inferInsert> = { ...rest };
     if (bedrooms !== undefined) updates.bedrooms = String(bedrooms);
     if (bathrooms !== undefined) updates.bathrooms = String(bathrooms);
     if (rentAmount !== undefined) updates.rentAmount = String(rentAmount);
+    if (sizeSqm !== undefined) updates.sizeSqm = String(sizeSqm);
     updates.updatedAt = new Date();
 
     const [updated] = await db.update(properties).set(updates).where(eq(properties.id, propertyId)).returning();
@@ -149,6 +167,7 @@ export async function listProperties(
 
     if (filters.status) conditions.push(eq(properties.status, filters.status));
     if (filters.type) conditions.push(eq(properties.type, filters.type));
+    if (filters.category) conditions.push(eq(properties.category, filters.category));
     if (filters.city) conditions.push(ilike(properties.city, `%${filters.city}%`));
     if (filters.minRent !== undefined) conditions.push(gte(properties.rentAmount, String(filters.minRent)));
     if (filters.maxRent !== undefined) conditions.push(lte(properties.rentAmount, String(filters.maxRent)));
@@ -156,6 +175,8 @@ export async function listProperties(
 
     if (requester.role === "owner") {
         conditions.push(eq(properties.ownerId, requester.id));
+    } else if (requester.role === "house_manager") {
+        conditions.push(eq(properties.ownerId, await resolveEffectiveOwnerId(requester)));
     } else if (requester.role === "agent") {
         conditions.push(eq(properties.agentId, requester.id));
     } else if (requester.role === "tenant") {
@@ -197,7 +218,7 @@ export async function addPropertyImages(propertyId: string, requester: Requester
     const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!property) throw AppError.notFound("Property not found");
 
-    assertPropertyWriteAccess(property, requester);
+    await assertPropertyWriteAccess(property, requester);
 
     const inserted = [];
     for (const file of files) {
@@ -216,7 +237,7 @@ export async function deletePropertyImage(propertyId: string, imageId: string, r
     const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!property) throw AppError.notFound("Property not found");
 
-    assertPropertyWriteAccess(property, requester);
+    await assertPropertyWriteAccess(property, requester);
 
     const [image] = await db
         .select()

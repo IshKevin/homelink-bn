@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { differenceInCalendarDays, endOfYear, format, startOfYear } from "date-fns";
 import { db } from "../../database";
 import { invoices, leases, maintenanceRequests, payments, properties, users } from "../../database/schema";
@@ -55,7 +55,7 @@ export function resolveDateRange(from?: string, to?: string): { start: Date; end
 export async function getRentalHistoryReport(requester: Requester, { from, to }: ReportDateRangeInput): Promise<ReportResult> {
     const { periodFrom, periodTo } = resolveDateRange(from, to);
 
-    const conditions = [lte(leases.startDate, periodTo), gte(leases.endDate, periodFrom)];
+    const conditions = [lte(leases.startDate, periodTo), or(gte(leases.endDate, periodFrom), isNull(leases.endDate))];
 
     if (requester.role === "tenant") {
         conditions.push(eq(leases.tenantId, requester.id));
@@ -166,12 +166,18 @@ export async function getOccupancyReport(requester: Requester, { from, to }: Rep
         const propertyLeases = await db
             .select()
             .from(leases)
-            .where(and(eq(leases.propertyId, property.id), lte(leases.startDate, periodTo), gte(leases.endDate, periodFrom)));
+            .where(
+                and(
+                    eq(leases.propertyId, property.id),
+                    lte(leases.startDate, periodTo),
+                    or(gte(leases.endDate, periodFrom), isNull(leases.endDate))
+                )
+            );
 
         let occupiedDays = 0;
         for (const lease of propertyLeases) {
             const leaseStart = new Date(lease.startDate);
-            const leaseEnd = new Date(lease.endDate);
+            const leaseEnd = lease.endDate ? new Date(lease.endDate) : end;
             const clampedStart = leaseStart < start ? start : leaseStart;
             const clampedEnd = leaseEnd > end ? end : leaseEnd;
             const days = differenceInCalendarDays(clampedEnd, clampedStart) + 1;

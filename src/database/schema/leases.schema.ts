@@ -1,4 +1,4 @@
-import { date, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users.schema";
 import { properties } from "./properties.schema";
@@ -29,10 +29,14 @@ export const leases = pgTable("leases", {
         .notNull()
         .references(() => users.id, { onDelete: "cascade" }),
     startDate: date("start_date").notNull(),
-    endDate: date("end_date").notNull(),
+    endDate: date("end_date"),
+    paymentDate: date("payment_date"),
     rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
     status: leaseStatusEnum("status").notNull().default("draft"),
     documentUrl: text("document_url"),
+    documentsConfirmed: boolean("documents_confirmed").notNull().default(false),
+    documentsConfirmedBy: uuid("documents_confirmed_by").references(() => users.id),
+    documentsConfirmedAt: timestamp("documents_confirmed_at", { withTimezone: true }),
     tenantSignedAt: timestamp("tenant_signed_at", { withTimezone: true }),
     ownerSignedAt: timestamp("owner_signed_at", { withTimezone: true }),
     terminatedAt: timestamp("terminated_at", { withTimezone: true }),
@@ -41,6 +45,18 @@ export const leases = pgTable("leases", {
         .notNull()
         .defaultNow()
         .$onUpdate(() => new Date())
+});
+
+export const leaseDocuments = pgTable("lease_documents", {
+    id: uuid("id").defaultRandom().primaryKey(),
+    leaseId: uuid("lease_id")
+        .notNull()
+        .references(() => leases.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    uploadedBy: uuid("uploaded_by")
+        .notNull()
+        .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 
 export const leaseChangeRequests = pgTable("lease_change_requests", {
@@ -88,5 +104,11 @@ export const leasesRelations = relations(leases, ({ one, many }) => ({
     tenant: one(users, { fields: [leases.tenantId], references: [users.id] }),
     owner: one(users, { fields: [leases.ownerId], references: [users.id] }),
     changeRequests: many(leaseChangeRequests),
-    moveRequests: many(moveRequests)
+    moveRequests: many(moveRequests),
+    documents: many(leaseDocuments)
+}));
+
+export const leaseDocumentsRelations = relations(leaseDocuments, ({ one }) => ({
+    lease: one(leases, { fields: [leaseDocuments.leaseId], references: [leases.id] }),
+    uploader: one(users, { fields: [leaseDocuments.uploadedBy], references: [users.id] })
 }));

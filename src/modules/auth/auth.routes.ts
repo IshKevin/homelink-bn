@@ -6,7 +6,8 @@ import {
     loginSchema,
     refreshSchema,
     registerSchema,
-    resetPasswordSchema
+    resetPasswordSchema,
+    verifyLoginChallengeSchema
 } from "./auth.validation";
 import {
     forgotPasswordHandler,
@@ -14,7 +15,8 @@ import {
     logoutHandler,
     refreshHandler,
     registerHandler,
-    resetPasswordHandler
+    resetPasswordHandler,
+    verifyLoginChallengeHandler
 } from "./auth.controller";
 
 const router = Router();
@@ -27,7 +29,7 @@ router.use(authRateLimiter);
  *   schemas:
  *     RegisterInput:
  *       type: object
- *       required: [email, password, firstName, lastName, role]
+ *       required: [email, password, firstName, lastName, phone, role]
  *       properties:
  *         email: { type: string, format: email }
  *         password: { type: string, format: password, minLength: 8 }
@@ -86,7 +88,11 @@ router.post("/register", validate(registerSchema), registerHandler);
  *               password: { type: string, format: password }
  *     responses:
  *       200:
- *         description: Login successful
+ *         description: >
+ *           Login successful, returning { user, accessToken, refreshToken } — unless the request
+ *           comes from a device/IP not previously seen for this account, in which case no tokens
+ *           are issued and the response is { requiresVerification: true, challengeId } instead;
+ *           complete the sign-in via POST /auth/login/verify with the emailed code.
  *         content:
  *           application/json:
  *             schema:
@@ -99,6 +105,39 @@ router.post("/register", validate(registerSchema), registerHandler);
  *               $ref: '#/components/schemas/ApiError'
  */
 router.post("/login", validate(loginSchema), loginHandler);
+
+/**
+ * @openapi
+ * /auth/login/verify:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Verify the OTP code sent for a sign-in from an unrecognized device
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [challengeId, code]
+ *             properties:
+ *               challengeId: { type: string, format: uuid }
+ *               code: { type: string }
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       401:
+ *         description: Invalid or expired code
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.post("/login/verify", validate(verifyLoginChallengeSchema), verifyLoginChallengeHandler);
 
 /**
  * @openapi
@@ -124,7 +163,7 @@ router.post("/login", validate(loginSchema), loginHandler);
  *             schema:
  *               $ref: '#/components/schemas/SuccessResponse'
  *       401:
- *         description: Invalid or expired refresh token
+ *         description: Invalid or expired refresh token, or the session was idle past the inactivity timeout
  *         content:
  *           application/json:
  *             schema:

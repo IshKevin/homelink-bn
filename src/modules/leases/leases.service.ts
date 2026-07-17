@@ -1,11 +1,12 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../database";
-import { leaseChangeRequests, leases, moveRequests, properties, users } from "../../database/schema";
+import { leaseChangeRequests, leaseDocuments, leases, moveRequests, properties, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
-import { buildObjectKey, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
+import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
 import { renderHtmlToPdf } from "../../services/pdf.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
+import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
@@ -19,8 +20,15 @@ export interface CreateLeaseInput {
     propertyId: string;
     tenantId: string;
     startDate: string;
-    endDate: string;
+    endDate?: string;
+    paymentDate?: string;
     rentAmount: number;
+}
+
+async function isEffectiveLeaseOwner(lease: LeaseRow, requester: Requester): Promise<boolean> {
+    if (requester.role === "owner") return lease.ownerId === requester.id;
+    if (requester.role === "house_manager") return lease.ownerId === (await resolveEffectiveOwnerId(requester));
+    return false;
 }
 
 export interface ListLeasesFilters {
@@ -40,8 +48,9 @@ const DEFAULT_MOVE_IN_CHECKLIST: ChecklistItem[] = [
     { label: "Receive welcome packet", done: false }
 ];
 
-function assertLeaseParty(lease: LeaseRow, requester: Requester) {
-    if (requester.role === "admin" || lease.tenantId === requester.id || lease.ownerId === requester.id) return;
+async function assertLeaseParty(lease: LeaseRow, requester: Requester) {
+    if (isAdminRole(requester.role) || lease.tenantId === requester.id) return;
+    if (await isEffectiveLeaseOwner(lease, requester)) return;
     throw AppError.forbidden("You do not have permission to access this lease");
 }
 
@@ -65,7 +74,7 @@ async function assertLeaseAccess(lease: LeaseRow, requester: Requester): Promise
         }
         return;
     }
-    assertLeaseParty(lease, requester);
+    await assertLeaseParty(lease, requester);
 }
 
 function buildLeaseHtml(lease: LeaseRow, property: PropertyRow): string {
@@ -106,13 +115,17 @@ async function generateAndStoreLeaseDocument(lease: LeaseRow, property: Property
 }
 
 export async function createLease(creator: Requester, input: CreateLeaseInput) {
-    if (creator.role !== "owner" && creator.role !== "admin") {
+    if (creator.role !== "owner" && creator.role !== "house_manager" && !isAdminRole(creator.role)) {
         throw AppError.forbidden("You do not have permission to create leases");
     }
 
     const property = await getPropertyOrThrow(input.propertyId);
 
     if (creator.role === "owner" && property.ownerId !== creator.id) {
+        throw AppError.forbidden("You do not have permission to create a lease for this property");
+    }
+
+    if (creator.role === "house_manager" && property.ownerId !== (await resolveEffectiveOwnerId(creator))) {
         throw AppError.forbidden("You do not have permission to create a lease for this property");
     }
 
@@ -133,6 +146,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
             ownerId: property.ownerId,
             startDate: input.startDate,
             endDate: input.endDate,
+            paymentDate: input.paymentDate,
             rentAmount: String(input.rentAmount),
             status: "pending_signatures"
         })
@@ -186,6 +200,8 @@ export async function listLeases(
         conditions.push(eq(leases.tenantId, requester.id));
     } else if (requester.role === "owner") {
         conditions.push(eq(leases.ownerId, requester.id));
+    } else if (requester.role === "house_manager") {
+        conditions.push(eq(leases.ownerId, await resolveEffectiveOwnerId(requester)));
     }
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -299,7 +315,7 @@ export async function getLeaseDocument(
 
 async function createChangeRequest(leaseId: string, requester: Requester, type: ChangeRequestType, input: RequestChangeInput) {
     const lease = await getLeaseOrThrow(leaseId);
-    assertLeaseParty(lease, requester);
+    await assertLeaseParty(lease, requester);
 
     if (lease.status !== "active") {
         throw AppError.conflict("Lease must be active to request a change");
@@ -376,7 +392,7 @@ export async function decideChangeRequest(
 
     const lease = await getLeaseOrThrow(changeRequest.leaseId);
 
-    if (decider.id !== lease.ownerId && decider.role !== "admin") {
+    if (!isAdminRole(decider.role) && !(await isEffectiveLeaseOwner(lease, decider))) {
         throw AppError.forbidden("You do not have permission to decide this change request");
     }
 
@@ -493,7 +509,7 @@ export async function updateMoveRequestChecklist(moveRequestId: string, requeste
     }
 
     const lease = await getLeaseOrThrow(moveRequest.leaseId);
-    assertLeaseParty(lease, requester);
+    await assertLeaseParty(lease, requester);
 
     const allDone = checklist.length > 0 && checklist.every((item) => item.done);
     const anyDone = checklist.some((item) => item.done);
@@ -544,7 +560,7 @@ export async function inspectMoveRequest(moveRequestId: string, inspector: Reque
 
     const lease = await getLeaseOrThrow(moveRequest.leaseId);
 
-    if (inspector.id !== lease.ownerId && inspector.role !== "admin") {
+    if (!isAdminRole(inspector.role) && !(await isEffectiveLeaseOwner(lease, inspector))) {
         throw AppError.forbidden("You do not have permission to inspect this move request");
     }
 
@@ -583,6 +599,92 @@ export async function inspectMoveRequest(moveRequestId: string, inspector: Reque
         type: "moveout.completed",
         title: "Move-out completed",
         message: "Your move-out inspection has been completed.",
+        sendEmail: true
+    });
+
+    return updated;
+}
+
+export async function addLeaseDocuments(leaseId: string, requester: Requester, files: Express.Multer.File[]) {
+    const lease = await getLeaseOrThrow(leaseId);
+    await assertLeaseParty(lease, requester);
+
+    const inserted = [];
+    for (const file of files) {
+        const key = buildObjectKey("lease-documents", file.originalname);
+        const url = await uploadBuffer(key, file.buffer, file.mimetype);
+        const [document] = await db
+            .insert(leaseDocuments)
+            .values({ leaseId, url, uploadedBy: requester.id })
+            .returning();
+        if (document) inserted.push(document);
+    }
+
+    await recordAction({ userId: requester.id, action: "lease.documents.add", entity: "lease", entityId: leaseId });
+
+    return inserted;
+}
+
+export async function listLeaseDocuments(leaseId: string, requester: Requester) {
+    const lease = await getLeaseOrThrow(leaseId);
+    await assertLeaseAccess(lease, requester);
+
+    return db.select().from(leaseDocuments).where(eq(leaseDocuments.leaseId, leaseId)).orderBy(desc(leaseDocuments.createdAt));
+}
+
+export async function deleteLeaseDocument(leaseId: string, documentId: string, requester: Requester) {
+    const lease = await getLeaseOrThrow(leaseId);
+    await assertLeaseParty(lease, requester);
+
+    const [document] = await db
+        .select()
+        .from(leaseDocuments)
+        .where(and(eq(leaseDocuments.id, documentId), eq(leaseDocuments.leaseId, leaseId)))
+        .limit(1);
+    if (!document) throw AppError.notFound("Document not found");
+
+    await deleteObject(document.url).catch(() => undefined);
+    await db.delete(leaseDocuments).where(eq(leaseDocuments.id, documentId));
+
+    await recordAction({
+        userId: requester.id,
+        action: "lease.documents.delete",
+        entity: "lease",
+        entityId: leaseId,
+        metadata: { documentId }
+    });
+}
+
+export async function confirmLeaseDocuments(leaseId: string, requester: Requester) {
+    const lease = await getLeaseOrThrow(leaseId);
+    await assertLeaseParty(lease, requester);
+
+    if (lease.documentsConfirmed) {
+        throw AppError.conflict("Lease documents have already been confirmed");
+    }
+
+    const now = new Date();
+    const [updated] = await db
+        .update(leases)
+        .set({ documentsConfirmed: true, documentsConfirmedBy: requester.id, documentsConfirmedAt: now, updatedAt: now })
+        .where(eq(leases.id, leaseId))
+        .returning();
+
+    if (!updated) throw AppError.internal("Failed to confirm lease documents");
+
+    await recordAction({
+        userId: requester.id,
+        action: "lease.documents.confirm",
+        entity: "lease",
+        entityId: leaseId
+    });
+
+    const otherPartyId = requester.id === lease.tenantId ? lease.ownerId : lease.tenantId;
+    await notify({
+        userId: otherPartyId,
+        type: "lease.documents.confirmed",
+        title: "Lease documents confirmed",
+        message: "The lease documents have been confirmed by the other party.",
         sendEmail: true
     });
 

@@ -2,14 +2,17 @@ import { Router } from "express";
 import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
-import { listInvoicesSchema, listPaymentsSchema, payInvoiceSchema } from "./payments.validation";
+import { ADMIN_ROLES } from "../../common/constants/roles";
+import { listInvoicesSchema, listPaymentsSchema, payInvoiceSchema, rejectPaymentSchema } from "./payments.validation";
 import {
+    approvePaymentHandler,
     exportPaymentsHandler,
     getInvoiceHandler,
     getReceiptHandler,
     listInvoicesHandler,
     listPaymentsHandler,
-    payInvoiceHandler
+    payInvoiceHandler,
+    rejectPaymentHandler
 } from "./payments.controller";
 
 // Two separate routers, each mounted at its own real prefix (/invoices, /payments)
@@ -52,7 +55,7 @@ paymentsRouter.use(authenticate);
  *             schema:
  *               $ref: '#/components/schemas/PaginatedResponse'
  */
-invoicesRouter.get("/", authorize("tenant", "owner", "admin"), validate(listInvoicesSchema), listInvoicesHandler);
+invoicesRouter.get("/", authorize("tenant", "owner", "house_manager", ...ADMIN_ROLES), validate(listInvoicesSchema), listInvoicesHandler);
 
 /**
  * @openapi
@@ -85,7 +88,7 @@ invoicesRouter.get("/", authorize("tenant", "owner", "admin"), validate(listInvo
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-invoicesRouter.get("/:id", authorize("tenant", "owner", "admin"), getInvoiceHandler);
+invoicesRouter.get("/:id", authorize("tenant", "owner", "house_manager", ...ADMIN_ROLES), getInvoiceHandler);
 
 /**
  * @openapi
@@ -95,13 +98,13 @@ invoicesRouter.get("/:id", authorize("tenant", "owner", "admin"), getInvoiceHand
  *       type: object
  *       required: [method]
  *       properties:
- *         method: { type: string, enum: [mobile_money, bank_transfer] }
+ *         method: { type: string, enum: [mobile_money, bank_transfer, cash], description: "cash and bank_transfer are held pending the landlord's approval (see /payments/{id}/approve); mobile_money settles instantly via the mocked provider" }
  *         payerPhone: { type: string }
  *         payerAccount: { type: string }
  * /invoices/{id}/pay:
  *   post:
  *     tags: [Payments]
- *     summary: Pay an invoice via a mocked payment provider (tenant only)
+ *     summary: Pay an invoice — instantly via mobile_money, or pending landlord approval for cash/bank_transfer (tenant only)
  *     parameters:
  *       - in: path
  *         name: id
@@ -161,7 +164,7 @@ invoicesRouter.post("/:id/pay", authorize("tenant"), validate(payInvoiceSchema),
  *             schema:
  *               $ref: '#/components/schemas/PaginatedResponse'
  */
-paymentsRouter.get("/", authorize("tenant", "owner", "admin"), validate(listPaymentsSchema), listPaymentsHandler);
+paymentsRouter.get("/", authorize("tenant", "owner", "house_manager", ...ADMIN_ROLES), validate(listPaymentsSchema), listPaymentsHandler);
 
 /**
  * @openapi
@@ -185,7 +188,7 @@ paymentsRouter.get("/", authorize("tenant", "owner", "admin"), validate(listPaym
  *               type: string
  *               format: binary
  */
-paymentsRouter.get("/export", authorize("owner", "admin"), exportPaymentsHandler);
+paymentsRouter.get("/export", authorize("owner", "house_manager", ...ADMIN_ROLES), exportPaymentsHandler);
 
 /**
  * @openapi
@@ -212,6 +215,74 @@ paymentsRouter.get("/export", authorize("owner", "admin"), exportPaymentsHandler
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-paymentsRouter.get("/:id/receipt", authorize("tenant", "owner", "admin"), getReceiptHandler);
+paymentsRouter.get("/:id/receipt", authorize("tenant", "owner", "house_manager", ...ADMIN_ROLES), getReceiptHandler);
+
+/**
+ * @openapi
+ * /payments/{id}/approve:
+ *   patch:
+ *     tags: [Payments]
+ *     summary: Approve a cash or bank-transfer payment awaiting landlord approval (owner, house manager, or admin)
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Payment approved and invoice marked paid
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       409:
+ *         description: Payment is not awaiting approval
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+paymentsRouter.patch("/:id/approve", authorize("owner", "house_manager", ...ADMIN_ROLES), approvePaymentHandler);
+
+/**
+ * @openapi
+ * /payments/{id}/reject:
+ *   patch:
+ *     tags: [Payments]
+ *     summary: Reject a cash or bank-transfer payment awaiting landlord approval (owner, house manager, or admin)
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [reason]
+ *             properties:
+ *               reason: { type: string }
+ *     responses:
+ *       200:
+ *         description: Payment rejected
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       409:
+ *         description: Payment is not awaiting approval
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+paymentsRouter.patch(
+    "/:id/reject",
+    authorize("owner", "house_manager", ...ADMIN_ROLES),
+    validate(rejectPaymentSchema),
+    rejectPaymentHandler
+);
 
 export { invoicesRouter, paymentsRouter };

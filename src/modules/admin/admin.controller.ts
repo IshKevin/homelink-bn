@@ -97,3 +97,35 @@ export async function listAuditLogsHandler(req: Request, res: Response) {
 
     return sendSuccess(res, { data: rows, meta: buildPaginationMeta(page, limit, total) });
 }
+
+export async function createHouseOwnerHandler(req: Request, res: Response) {
+    const owner = await adminService.createHouseOwner(req.user!.id, req.body);
+    return sendSuccess(res, { statusCode: 201, message: "House owner created", data: owner });
+}
+
+export async function listSuspensionRequestsHandler(req: Request, res: Response) {
+    const { page, limit, offset } = getPagination(req);
+    const query = req.query as { status?: "pending" | "approved" | "rejected" };
+
+    const { rows, total } = await adminService.listSuspensionRequests({ status: query.status }, { limit, offset });
+
+    return sendSuccess(res, { data: rows, meta: buildPaginationMeta(page, limit, total) });
+}
+
+export async function approveSuspensionRequestHandler(req: Request, res: Response) {
+    const request = await adminService.approveSuspensionRequest(
+        req.user!.id,
+        req.params["id"] as string,
+        req.body?.decisionNotes
+    );
+    return sendSuccess(res, { message: "Suspension request approved", data: request });
+}
+
+export async function rejectSuspensionRequestHandler(req: Request, res: Response) {
+    const request = await adminService.rejectSuspensionRequest(
+        req.user!.id,
+        req.params["id"] as string,
+        req.body.decisionNotes
+    );
+    return sendSuccess(res, { message: "Suspension request rejected", data: request });
+}

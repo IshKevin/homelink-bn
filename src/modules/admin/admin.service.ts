@@ -1,12 +1,27 @@
+import { addDays, addHours } from "date-fns";
 import { and, count, desc, eq, ilike, or } from "drizzle-orm";
 import { db } from "../../database";
-import { auditLogs, identityVerifications, platformSettings, properties, users } from "../../database/schema";
+import {
+    auditLogs,
+    identityVerifications,
+    passwordResetTokens,
+    platformSettings,
+    properties,
+    suspensionRequests,
+    users
+} from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
+import { generateRawToken, hashToken } from "../../common/utils/jwt.util";
+import { hashPassword } from "../../common/utils/password.util";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
+import { sendMail } from "../../services/email.service";
+import { setPasswordTemplate } from "../../services/email.templates";
+import { env } from "../../config/env";
 
 type UserRow = typeof users.$inferSelect;
 type IdentityVerificationRow = typeof identityVerifications.$inferSelect;
+type SuspensionRequestRow = typeof suspensionRequests.$inferSelect;
 
 function toPublicUser(user: UserRow) {
     const { passwordHash: _passwordHash, ...publicUser } = user;
@@ -350,4 +365,152 @@ export async function listAuditLogs(filters: ListAuditLogsFilters, pagination: {
         .offset(pagination.offset);
 
     return { rows, total: countRow?.count ?? 0 };
+}
+
+export interface CreateHouseOwnerInput {
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+}
+
+export async function createHouseOwner(adminId: string, input: CreateHouseOwnerInput) {
+    const [existing] = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
+    if (existing) {
+        throw AppError.conflict("An account with this email already exists");
+    }
+
+    const passwordHash = await hashPassword(generateRawToken());
+    const [owner] = await db
+        .insert(users)
+        .values({
+            email: input.email,
+            passwordHash,
+            firstName: input.firstName,
+            lastName: input.lastName,
+            phone: input.phone,
+            role: "owner",
+            isApproved: true
+        })
+        .returning();
+
+    if (!owner) throw AppError.internal("Failed to create house owner");
+
+    const rawToken = generateRawToken();
+    await db.insert(passwordResetTokens).values({
+        userId: owner.id,
+        tokenHash: hashToken(rawToken),
+        expiresAt: addHours(new Date(), 24)
+    });
+
+    const link = `${env.appUrl}/set-password?token=${rawToken}`;
+    await sendMail({
+        to: owner.email,
+        subject: "Set your HomeLink password",
+        html: setPasswordTemplate(owner.firstName, link)
+    });
+
+    await recordAction({
+        userId: adminId,
+        action: "admin.house_owner.create",
+        entity: "user",
+        entityId: owner.id
+    });
+
+    return toPublicUser(owner);
+}
+
+export interface ListSuspensionRequestsFilters {
+    status?: SuspensionRequestRow["status"] | undefined;
+}
+
+export async function listSuspensionRequests(
+    filters: ListSuspensionRequestsFilters,
+    pagination: { limit: number; offset: number }
+) {
+    const conditions = [];
+    if (filters.status) conditions.push(eq(suspensionRequests.status, filters.status));
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [countRow] = await db.select({ count: count() }).from(suspensionRequests).where(where);
+
+    const rows = await db
+        .select()
+        .from(suspensionRequests)
+        .where(where)
+        .orderBy(desc(suspensionRequests.createdAt))
+        .limit(pagination.limit)
+        .offset(pagination.offset);
+
+    return { rows, total: countRow?.count ?? 0 };
+}
+
+async function getSuspensionRequestOrThrow(requestId: string): Promise<SuspensionRequestRow> {
+    const [request] = await db
+        .select()
+        .from(suspensionRequests)
+        .where(eq(suspensionRequests.id, requestId))
+        .limit(1);
+    if (!request) throw AppError.notFound("Suspension request not found");
+    return request;
+}
+
+async function decideSuspensionRequest(
+    adminId: string,
+    requestId: string,
+    decision: "approved" | "rejected",
+    decisionNotes: string | undefined
+) {
+    const request = await getSuspensionRequestOrThrow(requestId);
+
+    if (request.status !== "pending") {
+        throw AppError.conflict("Suspension request has already been decided");
+    }
+
+    const now = new Date();
+    const [updated] = await db
+        .update(suspensionRequests)
+        .set({ status: decision, decidedBy: adminId, decisionNotes, decidedAt: now })
+        .where(eq(suspensionRequests.id, requestId))
+        .returning();
+
+    if (!updated) throw AppError.internal("Failed to decide suspension request");
+
+    if (decision === "approved") {
+        await db.update(users).set({ isActive: false }).where(eq(users.id, request.targetUserId));
+        await notify({
+            userId: request.targetUserId,
+            type: "account.suspended",
+            title: "Account suspended",
+            message: "Your account has been suspended by an administrator.",
+            sendEmail: true
+        });
+    }
+
+    await recordAction({
+        userId: adminId,
+        action: `admin.suspension_request.${decision}`,
+        entity: "suspension_request",
+        entityId: requestId,
+        metadata: { decisionNotes }
+    });
+
+    await notify({
+        userId: request.requestedBy,
+        type: `suspension_request.${decision}`,
+        title: `Suspension request ${decision}`,
+        message: decisionNotes ?? `Your suspension request has been ${decision}.`,
+        sendEmail: true
+    });
+
+    return updated;
+}
+
+export async function approveSuspensionRequest(adminId: string, requestId: string, decisionNotes?: string) {
+    return decideSuspensionRequest(adminId, requestId, "approved", decisionNotes);
+}
+
+export async function rejectSuspensionRequest(adminId: string, requestId: string, decisionNotes?: string) {
+    return decideSuspensionRequest(adminId, requestId, "rejected", decisionNotes);
 }

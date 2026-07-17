@@ -2,26 +2,34 @@ import { Router } from "express";
 import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
+import { ADMIN_ROLES } from "../../common/constants/roles";
 import {
+    createHouseOwnerSchema,
     deactivatePropertySchema,
     listAuditLogsSchema,
     listIdentityVerificationsSchema,
+    listSuspensionRequestsSchema,
     listUsersSchema,
     rejectIdentityVerificationSchema,
+    rejectSuspensionRequestSchema,
     updateUserStatusSchema,
     upsertSettingSchema
 } from "./admin.validation";
 import {
     approveAgentHandler,
     approveIdentityVerificationHandler,
+    approveSuspensionRequestHandler,
+    createHouseOwnerHandler,
     deactivatePropertyHandler,
     getSettingsHandler,
     getUserHandler,
     listAuditLogsHandler,
     listIdentityVerificationsHandler,
+    listSuspensionRequestsHandler,
     listUsersHandler,
     reactivatePropertyHandler,
     rejectIdentityVerificationHandler,
+    rejectSuspensionRequestHandler,
     updateUserStatusHandler,
     upsertSettingHandler
 } from "./admin.controller";
@@ -29,7 +37,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
-router.use(authorize("admin"));
+router.use(authorize(...ADMIN_ROLES));
 
 /**
  * @openapi
@@ -40,7 +48,7 @@ router.use(authorize("admin"));
  *     parameters:
  *       - in: query
  *         name: role
- *         schema: { type: string, enum: [tenant, owner, agent, admin] }
+ *         schema: { type: string, enum: [tenant, owner, agent, admin, superadmin, house_manager] }
  *       - in: query
  *         name: isApproved
  *         schema: { type: string, enum: [true, false] }
@@ -395,5 +403,132 @@ router.put("/settings/:key", validate(upsertSettingSchema), upsertSettingHandler
  *               $ref: '#/components/schemas/PaginatedResponse'
  */
 router.get("/audit-logs", validate(listAuditLogsSchema), listAuditLogsHandler);
+
+/**
+ * @openapi
+ * /admin/house-owners:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Create a house owner account (admin/superadmin only)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, firstName, lastName, phone]
+ *             properties:
+ *               email: { type: string }
+ *               firstName: { type: string }
+ *               lastName: { type: string }
+ *               phone: { type: string }
+ *     responses:
+ *       201:
+ *         description: House owner created; a "set your password" email is sent
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       409:
+ *         description: Email already in use
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.post("/house-owners", validate(createHouseOwnerSchema), createHouseOwnerHandler);
+
+/**
+ * @openapi
+ * /admin/suspension-requests:
+ *   get:
+ *     tags: [Admin]
+ *     summary: List account suspension requests raised by owners/managers (admin only)
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [pending, approved, rejected] }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Paginated list of suspension requests
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/PaginatedResponse'
+ */
+router.get("/suspension-requests", validate(listSuspensionRequestsSchema), listSuspensionRequestsHandler);
+
+/**
+ * @openapi
+ * /admin/suspension-requests/{id}/approve:
+ *   patch:
+ *     tags: [Admin]
+ *     summary: Approve a suspension request, deactivating the target user (admin only)
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Suspension request approved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       409:
+ *         description: Suspension request has already been decided
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.patch("/suspension-requests/:id/approve", approveSuspensionRequestHandler);
+
+/**
+ * @openapi
+ * /admin/suspension-requests/{id}/reject:
+ *   patch:
+ *     tags: [Admin]
+ *     summary: Reject a suspension request (admin only)
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [decisionNotes]
+ *             properties:
+ *               decisionNotes: { type: string }
+ *     responses:
+ *       200:
+ *         description: Suspension request rejected
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       409:
+ *         description: Suspension request has already been decided
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.patch(
+    "/suspension-requests/:id/reject",
+    validate(rejectSuspensionRequestSchema),
+    rejectSuspensionRequestHandler
+);
 
 export default router;

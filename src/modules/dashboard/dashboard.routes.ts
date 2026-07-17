@@ -2,8 +2,16 @@ import { Router } from "express";
 import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
+import { ADMIN_ROLES } from "../../common/constants/roles";
 import { statementQuerySchema } from "./dashboard.validation";
-import { getAdminDashboardHandler, getOwnerDashboardHandler, getStatementHandler } from "./dashboard.controller";
+import {
+    getAdminDashboardHandler,
+    getAgentDashboardHandler,
+    getMyDashboardHandler,
+    getOwnerDashboardHandler,
+    getStatementHandler,
+    getTenantDashboardHandler
+} from "./dashboard.controller";
 
 const router = Router();
 
@@ -29,7 +37,67 @@ router.use(authenticate);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.get("/owner", authorize("owner"), getOwnerDashboardHandler);
+router.get("/owner", authorize("owner", "house_manager"), getOwnerDashboardHandler);
+
+/**
+ * @openapi
+ * /dashboard/tenant:
+ *   get:
+ *     tags: [Dashboard]
+ *     summary: Get the dashboard for the authenticated tenant
+ *     responses:
+ *       200:
+ *         description: Tenant dashboard (active lease, outstanding balance, next due invoice, maintenance requests, unread notifications)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       403:
+ *         description: You do not have permission to perform this action
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.get("/tenant", authorize("tenant"), getTenantDashboardHandler);
+
+/**
+ * @openapi
+ * /dashboard/agent:
+ *   get:
+ *     tags: [Dashboard]
+ *     summary: Get the dashboard for the authenticated agent
+ *     responses:
+ *       200:
+ *         description: Agent dashboard (managed properties, active leases, maintenance requests, unread notifications)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       403:
+ *         description: You do not have permission to perform this action
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.get("/agent", authorize("agent"), getAgentDashboardHandler);
+
+/**
+ * @openapi
+ * /dashboard/me:
+ *   get:
+ *     tags: [Dashboard]
+ *     summary: Get the dashboard appropriate for the caller's own role (tenant, owner/house manager, agent, or admin/superadmin)
+ *     responses:
+ *       200:
+ *         description: Dashboard data shaped according to the caller's role
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.get("/me", getMyDashboardHandler);
 
 /**
  * @openapi
@@ -51,7 +119,7 @@ router.get("/owner", authorize("owner"), getOwnerDashboardHandler);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.get("/admin", authorize("admin"), getAdminDashboardHandler);
+router.get("/admin", authorize(...ADMIN_ROLES), getAdminDashboardHandler);
 
 /**
  * @openapi
@@ -93,6 +161,6 @@ router.get("/admin", authorize("admin"), getAdminDashboardHandler);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.get("/admin/statement", authorize("admin"), validate(statementQuerySchema), getStatementHandler);
+router.get("/admin/statement", authorize(...ADMIN_ROLES), validate(statementQuerySchema), getStatementHandler);
 
 export default router;

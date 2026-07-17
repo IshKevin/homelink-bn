@@ -10,12 +10,17 @@ const TABLES = [
     "invoices",
     "move_requests",
     "lease_change_requests",
+    "lease_documents",
     "leases",
     "property_images",
     "properties",
     "password_reset_tokens",
     "refresh_tokens",
+    "login_challenges",
     "identity_verifications",
+    "invites",
+    "manager_assignments",
+    "suspension_requests",
     "users",
     "platform_settings"
 ];

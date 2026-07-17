@@ -7,7 +7,8 @@ export const createLeaseSchema = {
         propertyId: z.string().uuid(),
         tenantId: z.string().uuid(),
         startDate: dateStringSchema,
-        endDate: dateStringSchema,
+        endDate: dateStringSchema.optional(),
+        paymentDate: dateStringSchema.optional(),
         rentAmount: z.number().positive()
     })
 };

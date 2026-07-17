@@ -1,4 +1,4 @@
-import { boolean, numeric, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, integer, numeric, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users.schema";
 
@@ -10,6 +10,7 @@ export const propertyTypeEnum = pgEnum("property_type", [
     "commercial",
     "other"
 ]);
+export const propertyCategoryEnum = pgEnum("property_category", ["residential", "commercial"]);
 export const propertyStatusEnum = pgEnum("property_status", ["available", "occupied"]);
 export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approved", "rejected"]);
 
@@ -22,6 +23,9 @@ export const properties = pgTable("properties", {
     title: varchar("title", { length: 255 }).notNull(),
     description: text("description"),
     type: propertyTypeEnum("type").notNull(),
+    category: propertyCategoryEnum("category").notNull().default("residential"),
+    sizeSqm: numeric("size_sqm", { precision: 10, scale: 2 }),
+    unitsCount: integer("units_count"),
     addressLine: varchar("address_line", { length: 255 }).notNull(),
     city: varchar("city", { length: 100 }).notNull(),
     state: varchar("state", { length: 100 }),

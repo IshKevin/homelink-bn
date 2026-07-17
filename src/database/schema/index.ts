@@ -6,3 +6,4 @@ export * from "./maintenance.schema";
 export * from "./notifications.schema";
 export * from "./audit.schema";
 export * from "./settings.schema";
+export * from "./iam.schema";

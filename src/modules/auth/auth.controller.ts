@@ -2,18 +2,28 @@ import type { Request, Response } from "express";
 import { sendSuccess } from "../../common/utils/response.util";
 import * as authService from "./auth.service";
 
+function requestMeta(req: Request): authService.RequestMeta {
+    return { ipAddress: req.ip, userAgent: req.headers["user-agent"] };
+}
+
 export async function registerHandler(req: Request, res: Response) {
-    const result = await authService.register(req.body);
+    const result = await authService.register(req.body, requestMeta(req));
     return sendSuccess(res, { statusCode: 201, message: "Registration successful", data: result });
 }
 
 export async function loginHandler(req: Request, res: Response) {
-    const result = await authService.login(req.body.email, req.body.password);
+    const result = await authService.login(req.body.email, req.body.password, requestMeta(req));
+    const message = "requiresVerification" in result ? "Verification code sent to your email" : "Login successful";
+    return sendSuccess(res, { message, data: result });
+}
+
+export async function verifyLoginChallengeHandler(req: Request, res: Response) {
+    const result = await authService.verifyLoginChallenge(req.body.challengeId, req.body.code, requestMeta(req));
     return sendSuccess(res, { message: "Login successful", data: result });
 }
 
 export async function refreshHandler(req: Request, res: Response) {
-    const result = await authService.refresh(req.body.refreshToken);
+    const result = await authService.refresh(req.body.refreshToken, requestMeta(req));
     return sendSuccess(res, { message: "Token refreshed", data: result });
 }
 

@@ -19,6 +19,7 @@ export async function listPropertiesHandler(req: Request, res: Response) {
     const query = req.query as {
         status?: "available" | "occupied";
         type?: "apartment" | "house" | "studio" | "condo" | "commercial" | "other";
+        category?: "residential" | "commercial";
         city?: string;
         minRent?: number;
         maxRent?: number;
@@ -30,6 +31,7 @@ export async function listPropertiesHandler(req: Request, res: Response) {
         {
             status: query.status,
             type: query.type,
+            category: query.category,
             city: query.city,
             minRent: query.minRent,
             maxRent: query.maxRent,

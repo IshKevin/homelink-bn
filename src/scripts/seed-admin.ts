@@ -15,6 +15,7 @@ async function main() {
 
     const firstName = process.env.ADMIN_FIRST_NAME || "Admin";
     const lastName = process.env.ADMIN_LAST_NAME || "User";
+    const phone = process.env.ADMIN_PHONE || "0000000000";
     const passwordHash = await hashPassword(password);
 
     const [existing] = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -31,6 +32,7 @@ async function main() {
             passwordHash,
             firstName,
             lastName,
+            phone,
             role: "admin",
             isApproved: true,
             isVerified: true

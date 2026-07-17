@@ -66,3 +66,13 @@ export async function getReceiptHandler(req: Request, res: Response) {
     const receipt = await paymentsService.getReceipt(req.params["id"] as string, req.user!);
     return sendSuccess(res, { data: receipt });
 }
+
+export async function approvePaymentHandler(req: Request, res: Response) {
+    const payment = await paymentsService.approvePayment(req.params["id"] as string, req.user!);
+    return sendSuccess(res, { message: "Payment approved", data: payment });
+}
+
+export async function rejectPaymentHandler(req: Request, res: Response) {
+    const payment = await paymentsService.rejectPayment(req.params["id"] as string, req.user!, req.body.reason);
+    return sendSuccess(res, { message: "Payment rejected", data: payment });
+}

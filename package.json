@@ -16,6 +16,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "seed:admin": "ts-node --transpile-only src/scripts/seed-admin.ts",
+    "seed:demo": "ts-node --transpile-only src/scripts/seed-demo-users.ts",
     "test": "NODE_ENV=test jest --runInBand",
     "test:watch": "NODE_ENV=test jest --runInBand --watch",
     "lint": "eslint .",

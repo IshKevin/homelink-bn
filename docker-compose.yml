@@ -85,6 +85,25 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # One-off: creates/resets a fixed set of demo accounts (one per role) for frontend/manual
+  # testing, with well-known emails/passwords. Only runs when SEED_DEMO_USERS=true.
+  seed-demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        IMAGE_TAG: ${IMAGE_TAG:-local}
+    container_name: homelink-seed-demo
+    command: ["npm", "run", "seed:demo"]
+    env_file:
+      - .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   api:
     build:
       context: .
@@ -103,6 +122,8 @@ services:
       migrate:
         condition: service_completed_successfully
       seed-admin:
+        condition: service_completed_successfully
+      seed-demo:
         condition: service_completed_successfully
       redis:
         condition: service_started

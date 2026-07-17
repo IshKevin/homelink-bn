@@ -4,8 +4,14 @@ import { users } from "./users.schema";
 import { leases } from "./leases.schema";
 
 export const invoiceStatusEnum = pgEnum("invoice_status", ["unpaid", "paid", "overdue"]);
-export const paymentMethodEnum = pgEnum("payment_method", ["mobile_money", "bank_transfer"]);
+export const paymentMethodEnum = pgEnum("payment_method", ["mobile_money", "bank_transfer", "cash"]);
 export const paymentStatusEnum = pgEnum("payment_status", ["pending", "success", "failed"]);
+export const paymentApprovalStatusEnum = pgEnum("payment_approval_status", [
+    "not_required",
+    "pending",
+    "approved",
+    "rejected"
+]);
 
 export const invoices = pgTable("invoices", {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -36,6 +42,9 @@ export const payments = pgTable("payments", {
     provider: varchar("provider", { length: 100 }).notNull(),
     providerReference: varchar("provider_reference", { length: 100 }).notNull(),
     status: paymentStatusEnum("status").notNull().default("pending"),
+    approvalStatus: paymentApprovalStatusEnum("approval_status").notNull().default("not_required"),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
     receiptUrl: text("receipt_url"),
     paidAt: timestamp("paid_at", { withTimezone: true }),

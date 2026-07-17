@@ -4,12 +4,13 @@ import { invoices, leases, maintenanceRequests, properties, users } from "../../
 import { hashPassword } from "../../src/common/utils/password.util";
 import { signAccessToken } from "../../src/common/utils/jwt.util";
 
-export type UserRole = "tenant" | "owner" | "agent" | "admin";
+export type UserRole = "tenant" | "owner" | "agent" | "admin" | "superadmin" | "house_manager";
 
 export interface CreateUserOverrides {
     email?: string;
     role?: UserRole;
     password?: string;
+    phone?: string;
     isApproved?: boolean;
     isVerified?: boolean;
 }
@@ -25,6 +26,7 @@ export async function createUser(overrides: CreateUserOverrides = {}) {
             role: overrides.role ?? "tenant",
             firstName: faker.person.firstName(),
             lastName: faker.person.lastName(),
+            phone: overrides.phone ?? faker.phone.number(),
             isApproved: overrides.isApproved ?? true,
             isVerified: overrides.isVerified ?? true
         })
@@ -50,6 +52,9 @@ export interface CreatePropertyOverrides {
     title?: string;
     description?: string;
     type?: "apartment" | "house" | "studio" | "condo" | "commercial" | "other";
+    category?: "residential" | "commercial";
+    sizeSqm?: number;
+    unitsCount?: number;
     addressLine?: string;
     city?: string;
     state?: string;
@@ -65,6 +70,7 @@ export interface CreatePropertyOverrides {
 }
 
 export async function createProperty(overrides: CreatePropertyOverrides) {
+    const type = overrides.type ?? "apartment";
     const [property] = await db
         .insert(properties)
         .values({
@@ -72,7 +78,10 @@ export async function createProperty(overrides: CreatePropertyOverrides) {
             agentId: overrides.agentId ?? undefined,
             title: overrides.title ?? faker.lorem.words(3),
             description: overrides.description ?? faker.lorem.sentence(),
-            type: overrides.type ?? "apartment",
+            type,
+            category: overrides.category ?? (type === "commercial" ? "commercial" : "residential"),
+            sizeSqm: overrides.sizeSqm !== undefined ? String(overrides.sizeSqm) : type === "commercial" ? "100" : undefined,
+            unitsCount: overrides.unitsCount,
             addressLine: overrides.addressLine ?? faker.location.streetAddress(),
             city: overrides.city ?? faker.location.city(),
             state: overrides.state ?? faker.location.state(),

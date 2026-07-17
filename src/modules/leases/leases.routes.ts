@@ -1,7 +1,9 @@
 import { Router } from "express";
+import multer from "multer";
 import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
+import { ADMIN_ROLES } from "../../common/constants/roles";
 import {
     createLeaseSchema,
     createMoveRequestSchema,
@@ -13,13 +15,17 @@ import {
     updateChecklistSchema
 } from "./leases.validation";
 import {
+    addLeaseDocumentsHandler,
     approveChangeRequestHandler,
+    confirmLeaseDocumentsHandler,
     createLeaseHandler,
     createMoveRequestHandler,
+    deleteLeaseDocumentHandler,
     getLeaseDocumentHandler,
     getLeaseHandler,
     inspectMoveRequestHandler,
     listChangeRequestsHandler,
+    listLeaseDocumentsHandler,
     listLeasesHandler,
     listMoveRequestsHandler,
     rejectChangeRequestHandler,
@@ -28,6 +34,8 @@ import {
     signLeaseHandler,
     updateMoveRequestChecklistHandler
 } from "./leases.controller";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const router = Router();
 
@@ -39,12 +47,13 @@ router.use(authenticate);
  *   schemas:
  *     CreateLeaseInput:
  *       type: object
- *       required: [propertyId, tenantId, startDate, endDate, rentAmount]
+ *       required: [propertyId, tenantId, startDate, rentAmount]
  *       properties:
  *         propertyId: { type: string, format: uuid }
  *         tenantId: { type: string, format: uuid }
  *         startDate: { type: string, example: "2026-01-01" }
- *         endDate: { type: string, example: "2026-12-31" }
+ *         endDate: { type: string, example: "2026-12-31", description: "Optional — omit for an open-ended lease" }
+ *         paymentDate: { type: string, example: "2026-01-05", description: "Optional agreed recurring payment date" }
  *         rentAmount: { type: number }
  * /leases:
  *   post:
@@ -95,7 +104,12 @@ router.use(authenticate);
  *             schema:
  *               $ref: '#/components/schemas/PaginatedResponse'
  */
-router.post("/", authorize("owner", "admin"), validate(createLeaseSchema), createLeaseHandler);
+router.post(
+    "/",
+    authorize("owner", "house_manager", ...ADMIN_ROLES),
+    validate(createLeaseSchema),
+    createLeaseHandler
+);
 router.get("/", validate(listLeasesSchema), listLeasesHandler);
 
 /**
@@ -217,7 +231,12 @@ router.get("/:id/document", getLeaseDocumentHandler);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.post("/:id/renewal-requests", authorize("tenant", "owner"), validate(renewalRequestSchema), requestRenewalHandler);
+router.post(
+    "/:id/renewal-requests",
+    authorize("tenant", "owner", "house_manager"),
+    validate(renewalRequestSchema),
+    requestRenewalHandler
+);
 
 /**
  * @openapi
@@ -253,7 +272,7 @@ router.post("/:id/renewal-requests", authorize("tenant", "owner"), validate(rene
  */
 router.post(
     "/:id/termination-requests",
-    authorize("tenant", "owner"),
+    authorize("tenant", "owner", "house_manager"),
     validate(terminationRequestSchema),
     requestTerminationHandler
 );
@@ -304,7 +323,11 @@ router.get("/:id/change-requests", listChangeRequestsHandler);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.patch("/change-requests/:id/approve", authorize("owner", "admin"), approveChangeRequestHandler);
+router.patch(
+    "/change-requests/:id/approve",
+    authorize("owner", "house_manager", ...ADMIN_ROLES),
+    approveChangeRequestHandler
+);
 
 /**
  * @openapi
@@ -342,7 +365,7 @@ router.patch("/change-requests/:id/approve", authorize("owner", "admin"), approv
  */
 router.patch(
     "/change-requests/:id/reject",
-    authorize("owner", "admin"),
+    authorize("owner", "house_manager", ...ADMIN_ROLES),
     validate(decideChangeRequestRejectSchema),
     rejectChangeRequestHandler
 );
@@ -429,7 +452,7 @@ router.get("/:id/move-requests", listMoveRequestsHandler);
  */
 router.patch(
     "/move-requests/:id/checklist",
-    authorize("tenant", "owner"),
+    authorize("tenant", "owner", "house_manager"),
     validate(updateChecklistSchema),
     updateMoveRequestChecklistHandler
 );
@@ -470,9 +493,108 @@ router.patch(
  */
 router.patch(
     "/move-requests/:id/inspect",
-    authorize("owner", "admin"),
+    authorize("owner", "house_manager", ...ADMIN_ROLES),
     validate(inspectMoveRequestSchema),
     inspectMoveRequestHandler
 );
+
+/**
+ * @openapi
+ * /leases/{id}/documents:
+ *   post:
+ *     tags: [Leases]
+ *     summary: Upload optional scanned/physical lease documents (tenant, owner, house manager, or admin)
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               documents:
+ *                 type: array
+ *                 items: { type: string, format: binary }
+ *     responses:
+ *       201:
+ *         description: Documents uploaded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *   get:
+ *     tags: [Leases]
+ *     summary: List uploaded documents for a lease
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: List of lease documents
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.post("/:id/documents", upload.array("documents", 5), addLeaseDocumentsHandler);
+router.get("/:id/documents", listLeaseDocumentsHandler);
+
+/**
+ * @openapi
+ * /leases/{id}/documents/{documentId}:
+ *   delete:
+ *     tags: [Leases]
+ *     summary: Delete an uploaded lease document
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: documentId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Document deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.delete("/:id/documents/:documentId", deleteLeaseDocumentHandler);
+
+/**
+ * @openapi
+ * /leases/{id}/documents/confirm:
+ *   patch:
+ *     tags: [Leases]
+ *     summary: Confirm the lease's documents (physical or uploaded) are accurate and received
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Lease documents confirmed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       409:
+ *         description: Lease documents have already been confirmed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.patch("/:id/documents/confirm", confirmLeaseDocumentsHandler);
 
 export default router;

@@ -1,4 +1,4 @@
-import { and, eq, lte, gte } from "drizzle-orm";
+import { and, eq, isNull, lte, gte, or } from "drizzle-orm";
 import { format, startOfMonth } from "date-fns";
 import { db } from "../../database";
 import { invoices, leases } from "../../database/schema";
@@ -13,7 +13,13 @@ export async function generateInvoicesJob(): Promise<void> {
     const activeLeases = await db
         .select()
         .from(leases)
-        .where(and(eq(leases.status, "active"), lte(leases.startDate, todayStr), gte(leases.endDate, todayStr)));
+        .where(
+            and(
+                eq(leases.status, "active"),
+                lte(leases.startDate, todayStr),
+                or(gte(leases.endDate, todayStr), isNull(leases.endDate))
+            )
+        );
 
     let created = 0;
     for (const lease of activeLeases) {

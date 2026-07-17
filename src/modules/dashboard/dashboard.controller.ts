@@ -2,11 +2,39 @@ import type { Request, Response } from "express";
 import { sendSuccess } from "../../common/utils/response.util";
 import { buildExcelBuffer } from "../../services/excel.service";
 import { renderHtmlToPdf } from "../../services/pdf.service";
+import { resolveEffectiveOwnerId } from "../../services/iam.service";
 import * as dashboardService from "./dashboard.service";
 
 export async function getOwnerDashboardHandler(req: Request, res: Response) {
-    const data = await dashboardService.getOwnerDashboard(req.user!.id);
+    const ownerId = await resolveEffectiveOwnerId(req.user!);
+    const data = await dashboardService.getOwnerDashboard(ownerId);
     return sendSuccess(res, { data });
+}
+
+export async function getTenantDashboardHandler(req: Request, res: Response) {
+    const data = await dashboardService.getTenantDashboard(req.user!.id);
+    return sendSuccess(res, { data });
+}
+
+export async function getAgentDashboardHandler(req: Request, res: Response) {
+    const data = await dashboardService.getAgentDashboard(req.user!.id);
+    return sendSuccess(res, { data });
+}
+
+export async function getMyDashboardHandler(req: Request, res: Response) {
+    const role = req.user!.role;
+
+    if (role === "tenant") {
+        return sendSuccess(res, { data: await dashboardService.getTenantDashboard(req.user!.id) });
+    }
+    if (role === "agent") {
+        return sendSuccess(res, { data: await dashboardService.getAgentDashboard(req.user!.id) });
+    }
+    if (role === "owner" || role === "house_manager") {
+        const ownerId = await resolveEffectiveOwnerId(req.user!);
+        return sendSuccess(res, { data: await dashboardService.getOwnerDashboard(ownerId) });
+    }
+    return sendSuccess(res, { data: await dashboardService.getAdminDashboard() });
 }
 
 export async function getAdminDashboardHandler(req: Request, res: Response) {

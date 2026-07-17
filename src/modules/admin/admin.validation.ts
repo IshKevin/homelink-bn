@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const listUsersSchema = {
     query: z.object({
-        role: z.enum(["tenant", "owner", "agent", "admin"]).optional(),
+        role: z.enum(["tenant", "owner", "agent", "admin", "superadmin", "house_manager"]).optional(),
         isApproved: z.enum(["true", "false"]).optional(),
         isActive: z.enum(["true", "false"]).optional(),
         search: z.string().optional(),
@@ -50,5 +50,28 @@ export const listAuditLogsSchema = {
         action: z.string().optional(),
         page: z.coerce.number().int().positive().optional(),
         limit: z.coerce.number().int().positive().optional()
+    })
+};
+
+export const createHouseOwnerSchema = {
+    body: z.object({
+        email: z.string().email(),
+        firstName: z.string().min(1),
+        lastName: z.string().min(1),
+        phone: z.string().min(5)
+    })
+};
+
+export const listSuspensionRequestsSchema = {
+    query: z.object({
+        status: z.enum(["pending", "approved", "rejected"]).optional(),
+        page: z.coerce.number().int().positive().optional(),
+        limit: z.coerce.number().int().positive().optional()
+    })
+};
+
+export const rejectSuspensionRequestSchema = {
+    body: z.object({
+        decisionNotes: z.string().min(3)
     })
 };

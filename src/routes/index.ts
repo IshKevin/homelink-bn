@@ -10,6 +10,7 @@ import notificationsRoutes from "../modules/notifications/notifications.routes";
 import adminRoutes from "../modules/admin/admin.routes";
 import dashboardRoutes from "../modules/dashboard/dashboard.routes";
 import reportsRoutes from "../modules/reports/reports.routes";
+import iamRoutes from "../modules/iam/iam.routes";
 
 const router = Router();
 
@@ -43,5 +44,6 @@ router.use("/notifications", notificationsRoutes);
 router.use("/admin", adminRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/reports", reportsRoutes);
+router.use("/iam", iamRoutes);
 
 export default router;

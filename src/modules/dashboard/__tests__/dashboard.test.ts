@@ -135,6 +135,104 @@ describe("Dashboard module", () => {
         });
     });
 
+    describe("GET /api/v1/dashboard/tenant", () => {
+        it("computes the active lease, outstanding balance, next due invoice and maintenance counts scoped to the tenant", async () => {
+            const { property, tenant, lease } = await setupOwnerWithLease();
+
+            await createInvoice({ leaseId: lease.id, amountDue: "500.00", status: "unpaid", dueDate: "2026-03-01" });
+            await createInvoice({ leaseId: lease.id, amountDue: "300.00", status: "overdue", dueDate: "2026-02-01" });
+            await createInvoice({ leaseId: lease.id, amountDue: "1000.00", status: "paid" });
+
+            await createMaintenanceRequest({ propertyId: property.id, tenantId: tenant.id, status: "submitted" });
+            await createMaintenanceRequest({ propertyId: property.id, tenantId: tenant.id, status: "in_progress" });
+            await createMaintenanceRequest({ propertyId: property.id, tenantId: tenant.id, status: "completed" });
+
+            const tenantLoginRes = await testRequest().post("/api/v1/auth/login").send({ email: tenant.email, password: "Password123!" });
+            const tenantToken = tenantLoginRes.body.data.accessToken;
+
+            const res = await testRequest().get("/api/v1/dashboard/tenant").set("Authorization", `Bearer ${tenantToken}`);
+            expect(res.status).toBe(200);
+
+            const data = res.body.data;
+            expect(data.activeLease.id).toBe(lease.id);
+            expect(data.outstandingBalance).toBe(800);
+            expect(data.nextDueInvoice.dueDate).toBe("2026-02-01");
+            expect(data.maintenanceRequests).toEqual({ open: 1, inProgress: 1, completed: 1 });
+        });
+
+        it("forbids an owner from accessing the tenant dashboard", async () => {
+            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const res = await testRequest().get("/api/v1/dashboard/tenant").set("Authorization", `Bearer ${ownerToken}`);
+            expect(res.status).toBe(403);
+        });
+    });
+
+    describe("GET /api/v1/dashboard/agent", () => {
+        it("computes managed-property and maintenance stats scoped to the agent", async () => {
+            const { user: agent, accessToken: agentToken } = await createAuthedUser({ role: "agent", isApproved: true });
+            const { user: owner } = await createAuthedUser({ role: "owner" });
+
+            const availableProperty = await createProperty({ ownerId: owner.id, agentId: agent.id, status: "available" });
+            const occupiedProperty = await createProperty({ ownerId: owner.id, agentId: agent.id, status: "occupied" });
+            const { user: tenant } = await createAuthedUser({ role: "tenant" });
+            const lease = await createLease({
+                propertyId: occupiedProperty.id,
+                tenantId: tenant.id,
+                ownerId: owner.id,
+                status: "active"
+            });
+
+            await createMaintenanceRequest({
+                propertyId: availableProperty.id,
+                tenantId: tenant.id,
+                status: "assigned",
+                assignedTo: agent.id
+            });
+
+            const res = await testRequest().get("/api/v1/dashboard/agent").set("Authorization", `Bearer ${agentToken}`);
+            expect(res.status).toBe(200);
+
+            const data = res.body.data;
+            expect(data.properties.total).toBe(2);
+            expect(data.properties.available).toBe(1);
+            expect(data.properties.occupied).toBe(1);
+            expect(data.activeLeases).toBe(1);
+            expect(data.maintenanceRequests.assignedToMe).toBe(1);
+            expect(data.maintenanceRequests.openAcrossManagedProperties).toBe(1);
+            expect(lease.status).toBe("active");
+        });
+
+        it("forbids a tenant from accessing the agent dashboard", async () => {
+            const { accessToken: tenantToken } = await createAuthedUser({ role: "tenant" });
+            const res = await testRequest().get("/api/v1/dashboard/agent").set("Authorization", `Bearer ${tenantToken}`);
+            expect(res.status).toBe(403);
+        });
+    });
+
+    describe("GET /api/v1/dashboard/me", () => {
+        it("routes to the right dashboard shape based on the caller's role", async () => {
+            const { accessToken: tenantToken } = await createAuthedUser({ role: "tenant" });
+            const tenantRes = await testRequest().get("/api/v1/dashboard/me").set("Authorization", `Bearer ${tenantToken}`);
+            expect(tenantRes.status).toBe(200);
+            expect(tenantRes.body.data).toHaveProperty("outstandingBalance");
+
+            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const ownerRes = await testRequest().get("/api/v1/dashboard/me").set("Authorization", `Bearer ${ownerToken}`);
+            expect(ownerRes.status).toBe(200);
+            expect(ownerRes.body.data).toHaveProperty("occupancy");
+
+            const { accessToken: agentToken } = await createAuthedUser({ role: "agent" });
+            const agentRes = await testRequest().get("/api/v1/dashboard/me").set("Authorization", `Bearer ${agentToken}`);
+            expect(agentRes.status).toBe(200);
+            expect(agentRes.body.data).toHaveProperty("activeLeases");
+
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const adminRes = await testRequest().get("/api/v1/dashboard/me").set("Authorization", `Bearer ${adminToken}`);
+            expect(adminRes.status).toBe(200);
+            expect(adminRes.body.data).toHaveProperty("usersByRole");
+        });
+    });
+
     describe("GET /api/v1/dashboard/admin", () => {
         it("reflects seeded platform-wide stats", async () => {
             const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });

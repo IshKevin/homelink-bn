@@ -2,9 +2,15 @@ import { z } from "zod";
 
 export const payInvoiceSchema = {
     body: z.object({
-        method: z.enum(["mobile_money", "bank_transfer"]),
+        method: z.enum(["mobile_money", "bank_transfer", "cash"]),
         payerPhone: z.string().optional(),
         payerAccount: z.string().optional()
+    })
+};
+
+export const rejectPaymentSchema = {
+    body: z.object({
+        reason: z.string().min(3)
     })
 };
 

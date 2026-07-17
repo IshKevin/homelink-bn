@@ -4,6 +4,7 @@ import { leases, maintenanceFeedback, maintenanceRequests, properties, users } f
 import { AppError } from "../../common/errors/AppError";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
+import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
@@ -32,20 +33,24 @@ export interface SubmitFeedbackInput {
     comment?: string | undefined;
 }
 
-function assertRequestAccess(request: MaintenanceRequestRow, property: PropertyRow, requester: Requester): void {
-    if (
-        requester.role === "admin" ||
-        requester.id === request.tenantId ||
-        requester.id === property.ownerId ||
-        requester.id === property.agentId
-    ) {
-        return;
-    }
+async function isEffectivePropertyManager(property: PropertyRow, requester: Requester): Promise<boolean> {
+    if (requester.id === property.ownerId || requester.id === property.agentId) return true;
+    if (requester.role === "house_manager") return property.ownerId === (await resolveEffectiveOwnerId(requester));
+    return false;
+}
+
+async function assertRequestAccess(
+    request: MaintenanceRequestRow,
+    property: PropertyRow,
+    requester: Requester
+): Promise<void> {
+    if (isAdminRole(requester.role) || requester.id === request.tenantId) return;
+    if (await isEffectivePropertyManager(property, requester)) return;
     throw AppError.forbidden("You do not have permission to access this maintenance request");
 }
 
-function assertManagerAccess(property: PropertyRow, actor: Requester): void {
-    if (actor.role === "admin" || actor.id === property.ownerId || actor.id === property.agentId) return;
+async function assertManagerAccess(property: PropertyRow, actor: Requester): Promise<void> {
+    if (isAdminRole(actor.role) || (await isEffectivePropertyManager(property, actor))) return;
     throw AppError.forbidden("You do not have permission to perform this action");
 }
 
@@ -146,6 +151,8 @@ export async function listMaintenanceRequests(
         conditions.push(eq(maintenanceRequests.tenantId, requester.id));
     } else if (requester.role === "owner") {
         conditions.push(eq(properties.ownerId, requester.id));
+    } else if (requester.role === "house_manager") {
+        conditions.push(eq(properties.ownerId, await resolveEffectiveOwnerId(requester)));
     } else if (requester.role === "agent") {
         conditions.push(eq(properties.agentId, requester.id));
     }
@@ -172,14 +179,14 @@ export async function listMaintenanceRequests(
 
 export async function getMaintenanceRequestById(requestId: string, requester: Requester) {
     const { request, property } = await getRequestWithPropertyOrThrow(requestId);
-    assertRequestAccess(request, property, requester);
+    await assertRequestAccess(request, property, requester);
     return request;
 }
 
 export async function assignMaintenanceRequest(requestId: string, actor: Requester, assignedTo: string) {
     const { request, property } = await getRequestWithPropertyOrThrow(requestId);
 
-    if (actor.role !== "admin" && actor.id !== property.ownerId && actor.id !== property.agentId) {
+    if (!isAdminRole(actor.role) && !(await isEffectivePropertyManager(property, actor))) {
         throw AppError.forbidden("You do not have permission to assign this maintenance request");
     }
 
@@ -220,10 +227,7 @@ export async function updateMaintenanceRequestStatus(requestId: string, actor: R
     const { request, property } = await getRequestWithPropertyOrThrow(requestId);
 
     const isAllowed =
-        actor.role === "admin" ||
-        actor.id === property.ownerId ||
-        actor.id === property.agentId ||
-        actor.id === request.assignedTo;
+        isAdminRole(actor.role) || actor.id === request.assignedTo || (await isEffectivePropertyManager(property, actor));
 
     if (!isAllowed) {
         throw AppError.forbidden("You do not have permission to update this maintenance request");
@@ -259,7 +263,7 @@ export async function completeMaintenanceRequest(
 ) {
     const { request, property } = await getRequestWithPropertyOrThrow(requestId);
 
-    assertManagerAccess(property, actor);
+    await assertManagerAccess(property, actor);
 
     if (request.status !== "assigned" && request.status !== "in_progress") {
         throw AppError.conflict("Request must be assigned or in progress before it can be completed");
@@ -357,7 +361,7 @@ export async function submitFeedback(requestId: string, tenant: Requester, input
 
 export async function getFeedback(requestId: string, requester: Requester) {
     const { request, property } = await getRequestWithPropertyOrThrow(requestId);
-    assertRequestAccess(request, property, requester);
+    await assertRequestAccess(request, property, requester);
 
     const [feedback] = await db
         .select()

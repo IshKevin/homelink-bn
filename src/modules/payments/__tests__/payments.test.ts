@@ -183,4 +183,74 @@ describe("Payments module", () => {
             expect(failedReceiptRes.status).toBe(404);
         });
     });
+
+    describe("cash / bank_transfer landlord approval", () => {
+        it("leaves a cash payment pending approval, then lets the owner approve it and mark the invoice paid", async () => {
+            const { ownerToken, tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const payRes = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "cash" });
+
+            expect(payRes.status).toBe(201);
+            expect(payRes.body.data.status).toBe("pending");
+            expect(payRes.body.data.approvalStatus).toBe("pending");
+
+            const invoiceAfterPay = await testRequest()
+                .get(`/api/v1/invoices/${invoice.id}`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(invoiceAfterPay.body.data.status).toBe("unpaid");
+
+            const approveRes = await testRequest()
+                .patch(`/api/v1/payments/${payRes.body.data.id}/approve`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(approveRes.status).toBe(200);
+            expect(approveRes.body.data.status).toBe("success");
+            expect(approveRes.body.data.approvalStatus).toBe("approved");
+
+            const invoiceAfterApprove = await testRequest()
+                .get(`/api/v1/invoices/${invoice.id}`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(invoiceAfterApprove.body.data.status).toBe("paid");
+        });
+
+        it("lets the owner reject a bank_transfer payment awaiting approval", async () => {
+            const { ownerToken, tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const payRes = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "bank_transfer" });
+
+            const rejectRes = await testRequest()
+                .patch(`/api/v1/payments/${payRes.body.data.id}/reject`)
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ reason: "Could not verify the transfer" });
+
+            expect(rejectRes.status).toBe(200);
+            expect(rejectRes.body.data.status).toBe("failed");
+            expect(rejectRes.body.data.approvalStatus).toBe("rejected");
+
+            const invoiceRes = await testRequest()
+                .get(`/api/v1/invoices/${invoice.id}`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(invoiceRes.body.data.status).toBe("unpaid");
+        });
+
+        it("forbids an unrelated owner from approving someone else's payment", async () => {
+            const { tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+            const { accessToken: otherOwnerToken } = await createAuthedUser({ role: "owner" });
+
+            const payRes = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "cash" });
+
+            const approveRes = await testRequest()
+                .patch(`/api/v1/payments/${payRes.body.data.id}/approve`)
+                .set("Authorization", `Bearer ${otherOwnerToken}`);
+            expect(approveRes.status).toBe(403);
+        });
+    });
 });

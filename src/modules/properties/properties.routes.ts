@@ -3,6 +3,7 @@ import multer from "multer";
 import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
+import { ADMIN_ROLES } from "../../common/constants/roles";
 import { createPropertySchema, listPropertiesSchema, rejectPropertySchema, updatePropertySchema } from "./properties.validation";
 import {
     addPropertyImagesHandler,
@@ -27,11 +28,14 @@ router.use(authenticate);
  *   schemas:
  *     CreatePropertyInput:
  *       type: object
- *       required: [title, type, addressLine, city, country, rentAmount]
+ *       required: [title, type, category, addressLine, city, country, rentAmount]
  *       properties:
  *         title: { type: string }
  *         description: { type: string }
  *         type: { type: string, enum: [apartment, house, studio, condo, commercial, other] }
+ *         category: { type: string, enum: [residential, commercial], description: "commercial requires type=commercial and sizeSqm; residential type=apartment requires unitsCount" }
+ *         sizeSqm: { type: number, description: "Required when category is commercial" }
+ *         unitsCount: { type: integer, description: "Required when type is apartment (doors/units in the building)" }
  *         addressLine: { type: string }
  *         city: { type: string }
  *         state: { type: string }
@@ -81,6 +85,9 @@ router.use(authenticate);
  *         name: type
  *         schema: { type: string, enum: [apartment, house, studio, condo, commercial, other] }
  *       - in: query
+ *         name: category
+ *         schema: { type: string, enum: [residential, commercial] }
+ *       - in: query
  *         name: city
  *         schema: { type: string }
  *       - in: query
@@ -106,7 +113,12 @@ router.use(authenticate);
  *             schema:
  *               $ref: '#/components/schemas/PaginatedResponse'
  */
-router.post("/", authorize("owner", "agent", "admin"), validate(createPropertySchema), createPropertyHandler);
+router.post(
+    "/",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    validate(createPropertySchema),
+    createPropertyHandler
+);
 router.get("/", validate(listPropertiesSchema), listPropertiesHandler);
 
 /**
@@ -167,7 +179,12 @@ router.get("/", validate(listPropertiesSchema), listPropertiesHandler);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.patch("/:id", authorize("owner", "agent", "admin"), validate(updatePropertySchema), updatePropertyHandler);
+router.patch(
+    "/:id",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    validate(updatePropertySchema),
+    updatePropertyHandler
+);
 router.get("/:id", getPropertyHandler);
 
 /**
@@ -205,7 +222,12 @@ router.get("/:id", getPropertyHandler);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.post("/:id/images", authorize("owner", "agent", "admin"), upload.array("images", 10), addPropertyImagesHandler);
+router.post(
+    "/:id/images",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    upload.array("images", 10),
+    addPropertyImagesHandler
+);
 
 /**
  * @openapi
@@ -236,7 +258,11 @@ router.post("/:id/images", authorize("owner", "agent", "admin"), upload.array("i
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.delete("/:id/images/:imageId", authorize("owner", "agent", "admin"), deletePropertyImageHandler);
+router.delete(
+    "/:id/images/:imageId",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    deletePropertyImageHandler
+);
 
 /**
  * @openapi
@@ -263,7 +289,7 @@ router.delete("/:id/images/:imageId", authorize("owner", "agent", "admin"), dele
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.patch("/:id/approve", authorize("admin"), approvePropertyHandler);
+router.patch("/:id/approve", authorize(...ADMIN_ROLES), approvePropertyHandler);
 
 /**
  * @openapi
@@ -299,6 +325,6 @@ router.patch("/:id/approve", authorize("admin"), approvePropertyHandler);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.patch("/:id/reject", authorize("admin"), validate(rejectPropertySchema), rejectPropertyHandler);
+router.patch("/:id/reject", authorize(...ADMIN_ROLES), validate(rejectPropertySchema), rejectPropertyHandler);
 
 export default router;

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
+import { ADMIN_ROLES } from "../../common/constants/roles";
 import { validate } from "../../common/middlewares/validate.middleware";
 import { reportQuerySchema } from "./reports.validation";
 import {
@@ -232,6 +233,6 @@ router.get("/revenue-performance", authorize("owner", "admin"), validate(reportQ
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.get("/agent-performance", authorize("admin"), validate(reportQuerySchema), getAgentPerformanceHandler);
+router.get("/agent-performance", authorize(...ADMIN_ROLES), validate(reportQuerySchema), getAgentPerformanceHandler);
 
 export default router;

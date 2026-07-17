@@ -68,6 +68,68 @@ describe("Leases module", () => {
 
             expect(res.status).toBe(409);
         });
+
+        it("allows creating an open-ended lease with no endDate, and an optional paymentDate", async () => {
+            const { ownerToken, tenant, property } = await setupOwnerTenantProperty();
+
+            const res = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    tenantId: tenant.id,
+                    startDate: "2026-01-01",
+                    paymentDate: "2026-01-05",
+                    rentAmount: 800
+                });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.endDate).toBeNull();
+            expect(res.body.data.paymentDate).toBe("2026-01-05");
+        });
+    });
+
+    describe("Lease documents", () => {
+        it("allows an optional document upload and lets either party confirm it", async () => {
+            const { ownerToken, tenantToken, tenant, property } = await setupOwnerTenantProperty();
+            const lease = await createLease({ propertyId: property.id, tenantId: tenant.id, ownerId: property.ownerId });
+
+            const uploadRes = await testRequest()
+                .post(`/api/v1/leases/${lease.id}/documents`)
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .attach("documents", Buffer.from("scan"), "signed-lease.pdf");
+            expect(uploadRes.status).toBe(201);
+            expect(uploadRes.body.data).toHaveLength(1);
+
+            const listRes = await testRequest()
+                .get(`/api/v1/leases/${lease.id}/documents`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(listRes.status).toBe(200);
+            expect(listRes.body.data).toHaveLength(1);
+
+            const confirmRes = await testRequest()
+                .patch(`/api/v1/leases/${lease.id}/documents/confirm`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(confirmRes.status).toBe(200);
+            expect(confirmRes.body.data.documentsConfirmed).toBe(true);
+
+            const secondConfirmRes = await testRequest()
+                .patch(`/api/v1/leases/${lease.id}/documents/confirm`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(secondConfirmRes.status).toBe(409);
+        });
+
+        it("forbids an unrelated user from uploading lease documents", async () => {
+            const { tenant, property } = await setupOwnerTenantProperty();
+            const lease = await createLease({ propertyId: property.id, tenantId: tenant.id, ownerId: property.ownerId });
+            const { accessToken: outsiderToken } = await createAuthedUser({ role: "tenant" });
+
+            const res = await testRequest()
+                .post(`/api/v1/leases/${lease.id}/documents`)
+                .set("Authorization", `Bearer ${outsiderToken}`)
+                .attach("documents", Buffer.from("scan"), "signed-lease.pdf");
+            expect(res.status).toBe(403);
+        });
     });
 
     describe("Signing a lease", () => {

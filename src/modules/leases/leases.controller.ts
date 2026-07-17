@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { AppError } from "../../common/errors/AppError";
 import { sendSuccess } from "../../common/utils/response.util";
 import { buildPaginationMeta, getPagination } from "../../common/utils/pagination.util";
 import * as leasesService from "./leases.service";
@@ -101,4 +102,28 @@ export async function inspectMoveRequestHandler(req: Request, res: Response) {
         req.body.inspectionNotes
     );
     return sendSuccess(res, { message: "Move request inspected", data: moveRequest });
+}
+
+export async function addLeaseDocumentsHandler(req: Request, res: Response) {
+    const files = req.files as Express.Multer.File[] | undefined;
+    if (!files || files.length === 0) {
+        throw AppError.badRequest("At least one document is required");
+    }
+    const documents = await leasesService.addLeaseDocuments(req.params["id"] as string, req.user!, files);
+    return sendSuccess(res, { statusCode: 201, message: "Documents uploaded", data: documents });
+}
+
+export async function listLeaseDocumentsHandler(req: Request, res: Response) {
+    const documents = await leasesService.listLeaseDocuments(req.params["id"] as string, req.user!);
+    return sendSuccess(res, { data: documents });
+}
+
+export async function deleteLeaseDocumentHandler(req: Request, res: Response) {
+    await leasesService.deleteLeaseDocument(req.params["id"] as string, req.params["documentId"] as string, req.user!);
+    return sendSuccess(res, { message: "Document deleted" });
+}
+
+export async function confirmLeaseDocumentsHandler(req: Request, res: Response) {
+    const lease = await leasesService.confirmLeaseDocuments(req.params["id"] as string, req.user!);
+    return sendSuccess(res, { message: "Lease documents confirmed", data: lease });
 }

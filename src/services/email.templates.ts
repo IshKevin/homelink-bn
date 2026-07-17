@@ -33,3 +33,29 @@ export function rentReminderTemplate(firstName: string, amount: string, dueDate:
 export function genericNotificationTemplate(firstName: string, message: string): string {
     return wrapTemplate("HomeLink Notification", `<p>Hi ${firstName},</p><p>${message}</p>`);
 }
+
+export function setPasswordTemplate(firstName: string, link: string): string {
+    return wrapTemplate(
+        "Set your HomeLink password",
+        `<p>Hi ${firstName},</p><p>An administrator created a HomeLink account for you. Set your password by clicking the link below. This link expires in 24 hours:</p>
+         <p><a href="${link}">${link}</a></p>`
+    );
+}
+
+export function inviteTemplate(inviterName: string, roleLabel: string, link: string): string {
+    return wrapTemplate(
+        `You've been invited to HomeLink`,
+        `<p>${inviterName} has invited you to join HomeLink as a ${roleLabel}.</p>
+         <p>Click the link below to accept the invitation. This link expires in 7 days:</p>
+         <p><a href="${link}">${link}</a></p>`
+    );
+}
+
+export function newDeviceLoginTemplate(firstName: string, code: string): string {
+    return wrapTemplate(
+        "Confirm this sign-in",
+        `<p>Hi ${firstName},</p><p>We noticed a sign-in to your HomeLink account from a device we don't recognize. Enter this code to continue:</p>
+         <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${code}</p>
+         <p>This code expires in 10 minutes. If this wasn't you, change your password immediately.</p>`
+    );
+}

@@ -1,7 +1,19 @@
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { endOfMonth, endOfYear, format, startOfMonth, startOfYear } from "date-fns";
 import { db } from "../../database";
-import { invoices, leases, maintenanceRequests, payments, platformSettings, properties, users } from "../../database/schema";
+import {
+    invites,
+    invoices,
+    leases,
+    maintenanceRequests,
+    managerAssignments,
+    notifications,
+    payments,
+    platformSettings,
+    properties,
+    suspensionRequests,
+    users
+} from "../../database/schema";
 
 const DEFAULT_TAX_RATE = 0.18;
 
@@ -117,15 +129,208 @@ export async function getOwnerDashboard(ownerId: string): Promise<OwnerDashboard
     };
 }
 
+export interface TenantDashboard {
+    activeLease: {
+        id: string;
+        propertyTitle: string;
+        addressLine: string;
+        city: string;
+        rentAmount: number;
+        startDate: string;
+        endDate: string | null;
+        status: string;
+    } | null;
+    outstandingBalance: number;
+    nextDueInvoice: { id: string; period: string; amountDue: number; dueDate: string } | null;
+    paymentsThisYear: number;
+    maintenanceRequests: { open: number; inProgress: number; completed: number };
+    unreadNotifications: number;
+}
+
+export async function getTenantDashboard(tenantId: string): Promise<TenantDashboard> {
+    const now = new Date();
+    const yearStart = startOfYear(now);
+    const yearEnd = endOfYear(now);
+
+    const [activeLeaseRow] = await db
+        .select({ lease: leases, property: properties })
+        .from(leases)
+        .innerJoin(properties, eq(leases.propertyId, properties.id))
+        .where(and(eq(leases.tenantId, tenantId), eq(leases.status, "active")))
+        .orderBy(desc(leases.createdAt))
+        .limit(1);
+
+    const activeLease = activeLeaseRow
+        ? {
+              id: activeLeaseRow.lease.id,
+              propertyTitle: activeLeaseRow.property.title,
+              addressLine: activeLeaseRow.property.addressLine,
+              city: activeLeaseRow.property.city,
+              rentAmount: Number(activeLeaseRow.lease.rentAmount),
+              startDate: activeLeaseRow.lease.startDate,
+              endDate: activeLeaseRow.lease.endDate,
+              status: activeLeaseRow.lease.status
+          }
+        : null;
+
+    const [outstandingRow] = await db
+        .select({ total: sql<string>`coalesce(sum(${invoices.amountDue}), 0)` })
+        .from(invoices)
+        .innerJoin(leases, eq(invoices.leaseId, leases.id))
+        .where(and(eq(leases.tenantId, tenantId), sql`${invoices.status} in ('unpaid', 'overdue')`));
+    const outstandingBalance = Number(outstandingRow?.total ?? 0);
+
+    const [nextDueInvoiceRow] = await db
+        .select({ invoice: invoices })
+        .from(invoices)
+        .innerJoin(leases, eq(invoices.leaseId, leases.id))
+        .where(and(eq(leases.tenantId, tenantId), sql`${invoices.status} in ('unpaid', 'overdue')`))
+        .orderBy(invoices.dueDate)
+        .limit(1);
+    const nextDueInvoice = nextDueInvoiceRow
+        ? {
+              id: nextDueInvoiceRow.invoice.id,
+              period: nextDueInvoiceRow.invoice.period,
+              amountDue: Number(nextDueInvoiceRow.invoice.amountDue),
+              dueDate: nextDueInvoiceRow.invoice.dueDate
+          }
+        : null;
+
+    const [paymentsThisYearRow] = await db
+        .select({ total: sql<string>`coalesce(sum(${payments.amount}), 0)` })
+        .from(payments)
+        .where(
+            and(
+                eq(payments.tenantId, tenantId),
+                eq(payments.status, "success"),
+                gte(payments.paidAt, yearStart),
+                lte(payments.paidAt, yearEnd)
+            )
+        );
+    const paymentsThisYear = Number(paymentsThisYearRow?.total ?? 0);
+
+    async function countMaintenanceByStatus(statuses: Array<typeof maintenanceRequests.$inferSelect.status>) {
+        const [row] = await db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(maintenanceRequests)
+            .where(and(eq(maintenanceRequests.tenantId, tenantId), inArray(maintenanceRequests.status, statuses)));
+        return row?.count ?? 0;
+    }
+
+    const [openCount, inProgressCount, completedCount] = await Promise.all([
+        countMaintenanceByStatus(["submitted", "assigned"]),
+        countMaintenanceByStatus(["in_progress"]),
+        countMaintenanceByStatus(["completed"])
+    ]);
+
+    const [unreadRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(notifications)
+        .where(and(eq(notifications.userId, tenantId), eq(notifications.isRead, false)));
+    const unreadNotifications = unreadRow?.count ?? 0;
+
+    return {
+        activeLease,
+        outstandingBalance,
+        nextDueInvoice,
+        paymentsThisYear,
+        maintenanceRequests: { open: openCount, inProgress: inProgressCount, completed: completedCount },
+        unreadNotifications
+    };
+}
+
+export interface AgentDashboard {
+    properties: { total: number; available: number; occupied: number; pendingApproval: number };
+    activeLeases: number;
+    maintenanceRequests: { assignedToMe: number; openAcrossManagedProperties: number };
+    unreadNotifications: number;
+}
+
+export async function getAgentDashboard(agentId: string): Promise<AgentDashboard> {
+    const [totalRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(properties)
+        .where(eq(properties.agentId, agentId));
+    const total = totalRow?.count ?? 0;
+
+    const [availableRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(properties)
+        .where(and(eq(properties.agentId, agentId), eq(properties.status, "available")));
+    const available = availableRow?.count ?? 0;
+
+    const [occupiedRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(properties)
+        .where(and(eq(properties.agentId, agentId), eq(properties.status, "occupied")));
+    const occupied = occupiedRow?.count ?? 0;
+
+    const [pendingApprovalRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(properties)
+        .where(and(eq(properties.agentId, agentId), eq(properties.approvalStatus, "pending")));
+    const pendingApproval = pendingApprovalRow?.count ?? 0;
+
+    const [activeLeasesRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(leases)
+        .innerJoin(properties, eq(leases.propertyId, properties.id))
+        .where(and(eq(properties.agentId, agentId), eq(leases.status, "active")));
+    const activeLeases = activeLeasesRow?.count ?? 0;
+
+    const [assignedToMeRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(maintenanceRequests)
+        .where(
+            and(eq(maintenanceRequests.assignedTo, agentId), inArray(maintenanceRequests.status, ["assigned", "in_progress"]))
+        );
+    const assignedToMe = assignedToMeRow?.count ?? 0;
+
+    const [openAcrossManagedRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(maintenanceRequests)
+        .innerJoin(properties, eq(maintenanceRequests.propertyId, properties.id))
+        .where(
+            and(
+                eq(properties.agentId, agentId),
+                inArray(maintenanceRequests.status, ["submitted", "assigned", "in_progress"])
+            )
+        );
+    const openAcrossManagedProperties = openAcrossManagedRow?.count ?? 0;
+
+    const [unreadRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(notifications)
+        .where(and(eq(notifications.userId, agentId), eq(notifications.isRead, false)));
+    const unreadNotifications = unreadRow?.count ?? 0;
+
+    return {
+        properties: { total, available, occupied, pendingApproval },
+        activeLeases,
+        maintenanceRequests: { assignedToMe, openAcrossManagedProperties },
+        unreadNotifications
+    };
+}
+
 export interface AdminDashboard {
     totalPlatformRevenue: number;
     activeUsers: number;
-    usersByRole: { tenant: number; owner: number; agent: number; admin: number };
+    usersByRole: {
+        tenant: number;
+        owner: number;
+        agent: number;
+        admin: number;
+        superadmin: number;
+        house_manager: number;
+    };
     properties: { total: number; newThisMonth: number };
     payments: { total: number; successCount: number; failedCount: number; successRatePercent: number };
+    iam: { activeManagers: number; pendingInvites: number; pendingSuspensionRequests: number };
 }
 
-async function countUsersByRole(role: "tenant" | "owner" | "agent" | "admin"): Promise<number> {
+async function countUsersByRole(
+    role: "tenant" | "owner" | "agent" | "admin" | "superadmin" | "house_manager"
+): Promise<number> {
     const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(users).where(eq(users.role, role));
     return row?.count ?? 0;
 }
@@ -147,11 +352,13 @@ export async function getAdminDashboard(): Promise<AdminDashboard> {
         .where(eq(users.isActive, true));
     const activeUsers = activeUsersRow?.count ?? 0;
 
-    const [tenantCount, ownerCount, agentCount, adminCount] = await Promise.all([
+    const [tenantCount, ownerCount, agentCount, adminCount, superadminCount, houseManagerCount] = await Promise.all([
         countUsersByRole("tenant"),
         countUsersByRole("owner"),
         countUsersByRole("agent"),
-        countUsersByRole("admin")
+        countUsersByRole("admin"),
+        countUsersByRole("superadmin"),
+        countUsersByRole("house_manager")
     ]);
 
     const [totalPropertiesRow] = await db.select({ count: sql<number>`count(*)::int` }).from(properties);
@@ -180,12 +387,38 @@ export async function getAdminDashboard(): Promise<AdminDashboard> {
 
     const successRatePercent = totalPayments === 0 ? 0 : round2((successCount / totalPayments) * 100);
 
+    const [activeManagersRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(managerAssignments)
+        .where(eq(managerAssignments.status, "active"));
+    const activeManagers = activeManagersRow?.count ?? 0;
+
+    const [pendingInvitesRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(invites)
+        .where(eq(invites.status, "pending"));
+    const pendingInvites = pendingInvitesRow?.count ?? 0;
+
+    const [pendingSuspensionRequestsRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(suspensionRequests)
+        .where(eq(suspensionRequests.status, "pending"));
+    const pendingSuspensionRequests = pendingSuspensionRequestsRow?.count ?? 0;
+
     return {
         totalPlatformRevenue,
         activeUsers,
-        usersByRole: { tenant: tenantCount, owner: ownerCount, agent: agentCount, admin: adminCount },
+        usersByRole: {
+            tenant: tenantCount,
+            owner: ownerCount,
+            agent: agentCount,
+            admin: adminCount,
+            superadmin: superadminCount,
+            house_manager: houseManagerCount
+        },
         properties: { total: totalProperties, newThisMonth },
-        payments: { total: totalPayments, successCount, failedCount, successRatePercent }
+        payments: { total: totalPayments, successCount, failedCount, successRatePercent },
+        iam: { activeManagers, pendingInvites, pendingSuspensionRequests }
     };
 }
 

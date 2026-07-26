@@ -11,6 +11,7 @@ import adminRoutes from "../modules/admin/admin.routes";
 import dashboardRoutes from "../modules/dashboard/dashboard.routes";
 import reportsRoutes from "../modules/reports/reports.routes";
 import iamRoutes from "../modules/iam/iam.routes";
+import leadsRoutes from "../modules/leads/leads.routes";
 
 const router = Router();
 
@@ -45,5 +46,6 @@ router.use("/admin", adminRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/reports", reportsRoutes);
 router.use("/iam", iamRoutes);
+router.use("/leads", leadsRoutes);
 
 export default router;

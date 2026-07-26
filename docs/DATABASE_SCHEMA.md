@@ -13,11 +13,11 @@ Every table belongs to one of six domains. Data flows roughly in this order: a p
 | Domain | Purpose | Tables |
 |---|---|---|
 | Identity & Access | Accounts, roles, verification, login sessions | `users`, `identity_verifications`, `refresh_tokens`, `password_reset_tokens` |
-| Property Management | Listings owners and agents publish for rent | `properties`, `property_images` |
+| Property Management | Listings owners and agents publish for rent | `properties`, `property_images`, `property_units` |
 | Leasing | Agreements, renewals/terminations, move in/out | `leases`, `lease_change_requests`, `move_requests` |
-| Payments & Billing | Rent invoices and the payments settling them | `invoices`, `payments` |
+| Payments & Billing | Rent invoices and the payments settling them | `invoices`, `payments`, `document_sequences` |
 | Maintenance | Tenant repair requests and post-fix feedback | `maintenance_requests`, `maintenance_feedback` |
-| Platform | Cross-cutting notifications, audit trail, config | `notifications`, `audit_logs`, `platform_settings` |
+| Platform | Cross-cutting notifications, audit trail, config, public leads | `notifications`, `audit_logs`, `platform_settings`, `leads` |
 
 Flow: **Identity → Property → Leasing → Billing**, with **Leasing → Maintenance**, and **all domains → Platform**.
 
@@ -42,8 +42,11 @@ erDiagram
     users ||--o{ audit_logs : "acts"
 
     properties ||--o{ property_images : "has"
+    properties ||--o{ property_units : "has"
     properties ||--o{ leases : "leased via"
     properties ||--o{ maintenance_requests : "has"
+
+    property_units ||--o{ leases : "leased via"
 
     leases ||--o{ lease_change_requests : "has"
     leases ||--o{ move_requests : "has"
@@ -125,12 +128,16 @@ A listing owned by one user and optionally managed by an agent, awaiting or hold
 | agent_id | uuid → users.id | Optional · cleared if agent is removed |
 | title / description | varchar(255) / text | Title required, description optional |
 | type | enum `property_type` | Required |
+| upi | varchar(50) | Optional — Rwandan cadastral parcel ID |
+| terms | jsonb (`string[]`) | Itemized lease terms, e.g. "12-month lease" |
+| attributes | jsonb (`{label,value}[]`) | Freeform extra facts, e.g. "Floor: 3rd Floor" |
+| document_url | text | Optional — a property-level document (e.g. title deed) |
 | address_line / city / country | varchar | Required |
 | state / postal_code | varchar | Optional |
 | bedrooms / bathrooms | numeric(4,0) | Optional counts |
 | rent_amount | numeric(12,2) | Required |
 | rent_conditions | text | Optional |
-| status | enum `property_status` | Default `available` |
+| status | enum `property_status` | Default `available` — a roll-up: `available` if any unit is available, else `occupied` |
 | approval_status | enum `approval_status` | Default `pending` |
 | is_active | boolean | Soft-delist switch |
 | approved_by | uuid → users.id | Admin who approved it |
@@ -146,20 +153,37 @@ Photos attached to a listing, any number per property. **PK:** `id`
 | url | text | Required |
 | created_at | timestamptz | Auto-managed |
 
+### `property_units`
+An individually leasable unit within a property — every property has at least one (auto-created alongside it). **PK:** `id`
+
+| Column | Type | Notes |
+|---|---|---|
+| property_id | uuid → properties.id | Required · deleted with the property |
+| label | varchar(100) | e.g. "Unit 4B" |
+| bedrooms / bathrooms | numeric(4,0) | Optional, can override the property's defaults |
+| rent_amount | numeric(12,2) | Required — can differ per unit |
+| status | enum `property_status` | Default `available` — flips to `occupied` once a lease on this unit is fully signed |
+| created_at / updated_at | timestamptz | Auto-managed |
+
 ---
 
 ## Leasing
 
 ### `leases`
-The binding agreement between one tenant and one property, with its own rent amount and term. **PK:** `id`
+The binding agreement between one tenant and one unit of a property, with its own rent amount and term. **PK:** `id`
 
 | Column | Type | Notes |
 |---|---|---|
 | property_id | uuid → properties.id | Required · deleted with the property |
+| unit_id | uuid → property_units.id | Required · deleted with the unit |
 | tenant_id | uuid → users.id | Required · deleted with the tenant |
 | owner_id | uuid → users.id | Required · deleted with the owner |
 | start_date / end_date | date | Required |
+| payment_date | date | Optional — day-of-month rent is due; drives invoice `due_date` |
 | rent_amount | numeric(12,2) | Required — can differ from the listing's current rent |
+| deposit | numeric(12,2) | Optional — security deposit |
+| momo_number | varchar(30) | Optional — tenant's mobile money number for rent collection |
+| lease_period_note | text | Optional freeform note, e.g. "12-month renewable lease" |
 | status | enum `lease_status` | Default `draft` |
 | document_url | text | Signed lease document |
 | tenant_signed_at / owner_signed_at | timestamptz | Set as each party signs |
@@ -204,6 +228,7 @@ One rent charge for one lease in one billing period (month). **PK:** `id`
 
 | Column | Type | Notes |
 |---|---|---|
+| invoice_number | varchar(30) | Required · unique · e.g. `ACC-INV-2026-00001`, allocated from `document_sequences` |
 | lease_id | uuid → leases.id | Required · deleted with the lease |
 | period | varchar(7) | "YYYY-MM" billing period |
 | amount_due | numeric(12,2) | Required |
@@ -216,6 +241,7 @@ An attempt to settle an invoice — one invoice can have several attempts if ear
 
 | Column | Type | Notes |
 |---|---|---|
+| payment_number | varchar(30) | Required · unique · e.g. `ACC-PAY-2026-00001`, allocated from `document_sequences` |
 | invoice_id | uuid → invoices.id | Required · deleted with the invoice |
 | tenant_id | uuid → users.id | Required |
 | amount | numeric(12,2) | Required |
@@ -226,6 +252,15 @@ An attempt to settle an invoice — one invoice can have several attempts if ear
 | receipt_url | text | Optional |
 | paid_at | timestamptz | Set on success |
 | created_at | timestamptz | Auto-managed |
+
+### `document_sequences`
+A per-key running counter used to allocate sequential, human-readable numbers (invoice/payment) that reset every calendar year. **PK:** `key`
+
+| Column | Type | Notes |
+|---|---|---|
+| key | varchar(50) | Primary key, e.g. `"ACC-INV:2026"`, `"ACC-PAY:2026"` |
+| last_value | integer | Default `0`, incremented atomically per allocation |
+| updated_at | timestamptz | Auto-managed |
 
 ---
 
@@ -239,6 +274,7 @@ A repair issue a tenant reports on a property, tracked from submission through c
 | property_id | uuid → properties.id | Required · deleted with the property |
 | tenant_id | uuid → users.id | Required |
 | title / description | varchar(255) / text | Both required |
+| priority | enum `maintenance_priority` | Default `medium` |
 | status | enum `maintenance_status` | Default `submitted` |
 | assigned_to | uuid → users.id | Staff/contractor handling it |
 | items_cost / labor_cost | numeric(12,2) | Optional, filled in on completion |
@@ -291,6 +327,22 @@ Global key-value configuration for the platform, editable without a deploy. **PK
 | value | jsonb | Any JSON-shaped setting value |
 | updated_at | timestamptz | Auto-managed |
 
+### `leads`
+A public submission from the marketing site's Contact or Get Started form, reviewed by an admin — never auto-creates an account. **PK:** `id`
+
+| Column | Type | Notes |
+|---|---|---|
+| type | enum `lead_type` | Required — `contact` or `get_started` |
+| full_name | varchar(150) | Required |
+| email | varchar(255) | Required |
+| phone | varchar(30) | Optional — set on `get_started` |
+| role_interest | enum `lead_role_interest` | Optional — `get_started` only; the public form's "Agent" option maps to `house_manager` |
+| property_count | integer | Optional — `get_started` only |
+| subject | varchar(255) | Optional — `contact` only |
+| message | text | Optional |
+| status | enum `lead_status` | Default `new` |
+| created_at / updated_at | timestamptz | Auto-managed |
+
 ---
 
 ## Enumerated Values
@@ -313,6 +365,10 @@ Fixed sets of values enforced by the database, used across the tables above.
 | payment_method | mobile_money, bank_transfer |
 | payment_status | pending, success, failed |
 | maintenance_status | submitted, assigned, in_progress, completed |
+| maintenance_priority | low, medium, high |
+| lead_type | contact, get_started |
+| lead_role_interest | owner, house_manager, tenant |
+| lead_status | new, contacted, converted, dismissed |
 
 ---
 

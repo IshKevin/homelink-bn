@@ -145,7 +145,11 @@ Full request/response schemas are in Swagger UI (`/api-docs`) — generated from
 | `GET /`, `GET /:id` | any (tenants only see approved & active listings) |
 | `PATCH /:id` | owner (own), agent (assigned), admin |
 | `POST /:id/images`, `DELETE /:id/images/:imageId` | owner, agent, admin |
+| `PUT /:id/document`, `GET /:id/document`, `DELETE /:id/document` | owner, agent, house_manager, admin (GET open to any authenticated caller) |
+| `POST /:id/units`, `GET /:id/units`, `PATCH /:id/units/:unitId` | owner, agent, house_manager, admin (GET open to any authenticated caller) |
 | `PATCH /:id/approve`, `PATCH /:id/reject` | admin |
+
+Every property gets one default unit automatically on creation (`title`/`bedrooms`/`bathrooms`/`rentAmount` copied over) — additional units can be added for multi-unit buildings. `GET /:id` includes computed `totalUnits`/`occupiedUnits`. `properties.status` is a roll-up: `available` while at least one unit is free, `occupied` once every unit is leased.
 
 ### Leases — `/api/v1/leases`
 | Endpoint | Roles |
@@ -160,7 +164,7 @@ Full request/response schemas are in Swagger UI (`/api-docs`) — generated from
 | `PATCH /move-requests/:id/checklist` | tenant, owner |
 | `PATCH /move-requests/:id/inspect` | owner, admin |
 
-Signing a lease with both parties activates it, flips the property to `occupied`, generates and stores a lease PDF, and seeds a move-in checklist automatically.
+`POST /` requires a `unitId` for a specific unit on the property (409 if that unit isn't available — a property can have several concurrent leases, one per unit). Signing a lease with both parties activates it, flips that unit to `occupied` (rolling the property's status up accordingly), generates and stores a lease PDF, and seeds a move-in checklist automatically. Leases also carry `deposit`, `momoNumber`, and `leasePeriodNote`; invoice due dates follow the lease's `paymentDate` (day-of-month) when set.
 
 ### Payments — `/api/v1/invoices`, `/api/v1/payments`
 | Endpoint | Roles |
@@ -171,7 +175,9 @@ Signing a lease with both parties activates it, flips the property to `occupied`
 | `GET /payments/export` | owner, admin |
 | `GET /payments/:id/receipt` | tenant, owner, admin (scoped) |
 
-> **`POST /invoices/:id/pay` is intentionally a placeholder gateway.** It is fully wired end-to-end (creates a payment record, flips the invoice to paid, generates a receipt, sends notifications) against `MockMobileMoneyProvider`/`MockBankTransferProvider` (`src/services/payments/mockProviders.ts`), not a real MTN/Airtel/bank integration. Swap `getPaymentProvider()` (`src/services/payments/payment.service.ts`) for real provider SDKs when ready — no other code needs to change. The mock deterministically fails when `amount === 1`, which is useful for exercising the failure path in tests.
+> **`POST /invoices/:id/pay` is intentionally a placeholder gateway.** It is fully wired end-to-end (creates a payment record, flips the invoice to paid, generates a receipt, sends notifications) against `MockMobileMoneyProvider`/`MockAirtelMoneyProvider`/`MockBankTransferProvider` (`src/services/payments/mockProviders.ts`), not a real MTN/Airtel/bank integration. For `method: "mobile_money"`, an optional `carrier: "mtn" | "airtel"` (default `mtn`) picks the provider, recorded as `payments.provider` (`"MTN Mobile Money"` / `"Airtel Money"`). Swap `getPaymentProvider()` (`src/services/payments/payment.service.ts`) for real provider SDKs when ready — no other code needs to change. The mock deterministically fails when `amount === 1`, which is useful for exercising the failure path in tests.
+
+> Every invoice/payment carries a human-readable `invoiceNumber`/`paymentNumber` (e.g. `ACC-INV-2026-00001`, `ACC-PAY-2026-00001`), allocated atomically from `document_sequences` (`src/common/utils/sequence.util.ts`) and reset each calendar year. They appear on the PDF receipt and in the payments Excel export alongside the UUID primary key.
 
 ### Maintenance — `/api/v1/maintenance-requests`
 | Endpoint | Roles |
@@ -181,6 +187,8 @@ Signing a lease with both parties activates it, flips the property to `occupied`
 | `PATCH /:id/assign`, `PATCH /:id/complete` | owner, agent, admin |
 | `PATCH /:id/status` | owner, agent, admin, or the assignee |
 | `POST /:id/feedback` | tenant (own request, after completion) |
+
+`POST /` accepts an optional `priority: "low" | "medium" | "high"` (defaults to `medium`).
 
 ### Notifications — `/api/v1/notifications`
 `GET /` · `GET /unread-count` · `PATCH /:id/read` · `PATCH /read-all` — always scoped to the caller.
@@ -200,6 +208,14 @@ All accept `?from&to&format=json|excel`.
 | `GET /rental-history`, `GET /payment-history` | tenant, owner, admin (scoped) |
 | `GET /occupancy`, `GET /maintenance-activity`, `GET /revenue-performance` | owner, admin (scoped) |
 | `GET /agent-performance` | admin |
+
+### Leads — `/api/v1/leads`
+| Endpoint | Roles |
+|---|---|
+| `POST /contact`, `POST /get-started` | public (unauthenticated, rate-limited) |
+| `GET /`, `PATCH /:id/status` | admin |
+
+Public lead-capture for the marketing site's Contact and Get Started forms. Submissions are stored for admin review and never auto-create an account — `get-started`'s "Agent"/"Property Manager" option is stored as `roleInterest: "house_manager"`, matching the platform's existing house-manager role; actual onboarding still goes through `/api/v1/iam` invites or admin action.
 
 ### Admin — `/api/v1/admin` (admin only)
 | Endpoint | Purpose |

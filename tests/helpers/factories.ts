@@ -1,8 +1,10 @@
 import { faker } from "@faker-js/faker";
+import { eq } from "drizzle-orm";
 import { db } from "../../src/database";
-import { invoices, leases, maintenanceRequests, properties, users } from "../../src/database/schema";
+import { invoices, leases, maintenanceRequests, properties, propertyUnits, users } from "../../src/database/schema";
 import { hashPassword } from "../../src/common/utils/password.util";
 import { signAccessToken } from "../../src/common/utils/jwt.util";
+import { nextDocumentNumber } from "../../src/common/utils/sequence.util";
 
 export type UserRole = "tenant" | "owner" | "agent" | "admin" | "superadmin" | "house_manager";
 
@@ -71,6 +73,10 @@ export interface CreatePropertyOverrides {
 
 export async function createProperty(overrides: CreatePropertyOverrides) {
     const type = overrides.type ?? "apartment";
+    const bedrooms = overrides.bedrooms !== undefined ? String(overrides.bedrooms) : "2";
+    const bathrooms = overrides.bathrooms !== undefined ? String(overrides.bathrooms) : "1";
+    const rentAmount = overrides.rentAmount !== undefined ? String(overrides.rentAmount) : "1000";
+
     const [property] = await db
         .insert(properties)
         .values({
@@ -87,9 +93,9 @@ export async function createProperty(overrides: CreatePropertyOverrides) {
             state: overrides.state ?? faker.location.state(),
             country: overrides.country ?? faker.location.country(),
             postalCode: overrides.postalCode ?? faker.location.zipCode(),
-            bedrooms: overrides.bedrooms !== undefined ? String(overrides.bedrooms) : "2",
-            bathrooms: overrides.bathrooms !== undefined ? String(overrides.bathrooms) : "1",
-            rentAmount: overrides.rentAmount !== undefined ? String(overrides.rentAmount) : "1000",
+            bedrooms,
+            bathrooms,
+            rentAmount,
             rentConditions: overrides.rentConditions,
             status: overrides.status ?? "available",
             approvalStatus: overrides.approvalStatus ?? "pending",
@@ -98,16 +104,43 @@ export async function createProperty(overrides: CreatePropertyOverrides) {
         .returning();
 
     if (!property) throw new Error("Failed to create test property");
+
+    await db.insert(propertyUnits).values({
+        propertyId: property.id,
+        label: property.title,
+        bedrooms,
+        bathrooms,
+        rentAmount,
+        status: overrides.status ?? "available"
+    });
+
     return property;
+}
+
+async function getOrCreateUnit(propertyId: string): Promise<string> {
+    const [existing] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, propertyId)).limit(1);
+    if (existing) return existing.id;
+
+    const [unit] = await db
+        .insert(propertyUnits)
+        .values({ propertyId, label: "Unit 1", rentAmount: "1000", status: "available" })
+        .returning();
+    if (!unit) throw new Error("Failed to create test unit");
+    return unit.id;
 }
 
 export interface CreateLeaseOverrides {
     propertyId: string;
+    unitId?: string;
     tenantId: string;
     ownerId: string;
     startDate?: string;
     endDate?: string;
+    paymentDate?: string;
     rentAmount?: number;
+    deposit?: number;
+    momoNumber?: string;
+    leasePeriodNote?: string;
     status?: "draft" | "pending_signatures" | "active" | "pending_renewal" | "pending_termination" | "terminated" | "expired";
     documentUrl?: string | null;
     tenantSignedAt?: Date | null;
@@ -116,15 +149,22 @@ export interface CreateLeaseOverrides {
 }
 
 export async function createLease(overrides: CreateLeaseOverrides) {
+    const unitId = overrides.unitId ?? (await getOrCreateUnit(overrides.propertyId));
+
     const [lease] = await db
         .insert(leases)
         .values({
             propertyId: overrides.propertyId,
+            unitId,
             tenantId: overrides.tenantId,
             ownerId: overrides.ownerId,
             startDate: overrides.startDate ?? "2026-01-01",
             endDate: overrides.endDate ?? "2026-12-31",
+            paymentDate: overrides.paymentDate,
             rentAmount: overrides.rentAmount !== undefined ? String(overrides.rentAmount) : "1000",
+            deposit: overrides.deposit !== undefined ? String(overrides.deposit) : undefined,
+            momoNumber: overrides.momoNumber,
+            leasePeriodNote: overrides.leasePeriodNote,
             status: overrides.status ?? "active",
             documentUrl: overrides.documentUrl ?? undefined,
             tenantSignedAt: overrides.tenantSignedAt ?? undefined,
@@ -146,9 +186,11 @@ export interface CreateInvoiceOverrides {
 }
 
 export async function createInvoice(overrides: CreateInvoiceOverrides) {
+    const invoiceNumber = await nextDocumentNumber("ACC-INV");
     const [invoice] = await db
         .insert(invoices)
         .values({
+            invoiceNumber,
             leaseId: overrides.leaseId,
             period: overrides.period ?? "2026-01",
             amountDue: overrides.amountDue !== undefined ? String(overrides.amountDue) : "1200.00",
@@ -166,6 +208,7 @@ export interface CreateMaintenanceRequestOverrides {
     tenantId: string;
     title?: string;
     description?: string;
+    priority?: "low" | "medium" | "high";
     status?: "submitted" | "assigned" | "in_progress" | "completed";
     assignedTo?: string | null;
     itemsCost?: number | null;
@@ -182,6 +225,7 @@ export async function createMaintenanceRequest(overrides: CreateMaintenanceReque
             tenantId: overrides.tenantId,
             title: overrides.title ?? faker.lorem.words(4),
             description: overrides.description ?? faker.lorem.sentence(),
+            priority: overrides.priority ?? "medium",
             status: overrides.status ?? "submitted",
             assignedTo: overrides.assignedTo ?? undefined,
             itemsCost: overrides.itemsCost !== undefined && overrides.itemsCost !== null ? String(overrides.itemsCost) : undefined,

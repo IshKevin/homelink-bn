@@ -13,6 +13,7 @@ const TABLES = [
     "lease_documents",
     "leases",
     "property_images",
+    "property_units",
     "properties",
     "password_reset_tokens",
     "refresh_tokens",
@@ -22,7 +23,9 @@ const TABLES = [
     "manager_assignments",
     "suspension_requests",
     "users",
-    "platform_settings"
+    "platform_settings",
+    "document_sequences",
+    "leads"
 ];
 
 export async function resetDb(): Promise<void> {

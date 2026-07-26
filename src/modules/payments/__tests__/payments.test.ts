@@ -33,10 +33,14 @@ describe("Payments module", () => {
     describe("GET /api/v1/invoices", () => {
         it("allows a tenant to list their own invoices, hidden from an unrelated tenant", async () => {
             const { tenantToken, invoice } = await setupLeaseWithInvoice();
+            expect(invoice.invoiceNumber).toMatch(/^ACC-INV-\d{4}-\d{5}$/);
 
             const res = await testRequest().get("/api/v1/invoices").set("Authorization", `Bearer ${tenantToken}`);
             expect(res.status).toBe(200);
             expect(res.body.data.some((i: { id: string }) => i.id === invoice.id)).toBe(true);
+            expect(res.body.data.find((i: { id: string }) => i.id === invoice.id).invoiceNumber).toBe(
+                invoice.invoiceNumber
+            );
 
             const { accessToken: otherTenantToken } = await createAuthedUser({ role: "tenant" });
             const otherRes = await testRequest().get("/api/v1/invoices").set("Authorization", `Bearer ${otherTenantToken}`);
@@ -65,11 +69,37 @@ describe("Payments module", () => {
             expect(res.status).toBe(201);
             expect(res.body.data.status).toBe("success");
             expect(res.body.data.receiptUrl).toBeTruthy();
+            expect(res.body.data.paymentNumber).toMatch(/^ACC-PAY-\d{4}-\d{5}$/);
 
             const invoiceRes = await testRequest()
                 .get(`/api/v1/invoices/${invoice.id}`)
                 .set("Authorization", `Bearer ${tenantToken}`);
             expect(invoiceRes.body.data.status).toBe("paid");
+        });
+
+        it("records the Airtel Money provider when carrier is 'airtel'", async () => {
+            const { tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const res = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "mobile_money", carrier: "airtel", payerPhone: "0788000000" });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.status).toBe("success");
+            expect(res.body.data.provider).toBe("Airtel Money");
+        });
+
+        it("defaults to the MTN Mobile Money provider when no carrier is given", async () => {
+            const { tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const res = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "mobile_money", payerPhone: "0788000000" });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.provider).toBe("MTN Mobile Money");
         });
 
         it("fails deterministically when amountDue is 1, leaving the invoice unpaid", async () => {

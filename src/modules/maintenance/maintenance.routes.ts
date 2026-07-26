@@ -37,6 +37,7 @@ router.use(authenticate);
  *         propertyId: { type: string, format: uuid }
  *         title: { type: string, example: "Leaking kitchen faucet" }
  *         description: { type: string, example: "The kitchen faucet has been leaking for two days." }
+ *         priority: { type: string, enum: [low, medium, high], description: "Defaults to medium" }
  * /maintenance-requests:
  *   post:
  *     tags: [Maintenance]

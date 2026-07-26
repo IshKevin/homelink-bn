@@ -9,6 +9,7 @@ import {
 import { eq } from "drizzle-orm";
 import { db } from "../../../database";
 import { payments, properties } from "../../../database/schema";
+import { nextDocumentNumber } from "../../../common/utils/sequence.util";
 
 jest.mock("../../../services/email.service", () => ({
     sendMail: jest.fn().mockResolvedValue(undefined)
@@ -25,6 +26,7 @@ async function insertPayment(overrides: {
     const [payment] = await db
         .insert(payments)
         .values({
+            paymentNumber: await nextDocumentNumber("ACC-PAY"),
             invoiceId: overrides.invoiceId,
             tenantId: overrides.tenantId,
             amount: overrides.amount,

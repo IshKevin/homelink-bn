@@ -36,6 +36,24 @@ describe("Maintenance module", () => {
             expect(res.status).toBe(201);
             expect(res.body.data.status).toBe("submitted");
             expect(res.body.data.propertyId).toBe(property.id);
+            expect(res.body.data.priority).toBe("medium");
+        });
+
+        it("accepts an explicit priority", async () => {
+            const { tenantToken, property } = await setupTenantWithActiveLease();
+
+            const res = await testRequest()
+                .post("/api/v1/maintenance-requests")
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({
+                    propertyId: property.id,
+                    title: "No hot water",
+                    description: "The water heater stopped working this morning.",
+                    priority: "high"
+                });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.priority).toBe("high");
         });
 
         it("forbids a tenant without an active lease on the property", async () => {

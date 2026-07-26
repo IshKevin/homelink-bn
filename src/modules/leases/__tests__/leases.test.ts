@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
 import { createAuthedUser, createLease, createProperty } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
-import { properties } from "../../../database/schema";
+import { properties, propertyUnits } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";
 
 jest.mock("../../../services/storage.service", () => ({
@@ -28,19 +28,22 @@ async function setupOwnerTenantProperty(overrides: { propertyStatus?: "available
         status: overrides.propertyStatus ?? "available",
         approvalStatus: "approved"
     });
-    return { owner, ownerToken, tenant, tenantToken, property };
+    const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id)).limit(1);
+    if (!unit) throw new Error("Expected createProperty to auto-create a default unit");
+    return { owner, ownerToken, tenant, tenantToken, property, unit };
 }
 
 describe("Leases module", () => {
     describe("POST /api/v1/leases", () => {
         it("allows an owner to create a lease for an available property", async () => {
-            const { ownerToken, tenant, property } = await setupOwnerTenantProperty();
+            const { ownerToken, tenant, property, unit } = await setupOwnerTenantProperty();
 
             const res = await testRequest()
                 .post("/api/v1/leases")
                 .set("Authorization", `Bearer ${ownerToken}`)
                 .send({
                     propertyId: property.id,
+                    unitId: unit.id,
                     tenantId: tenant.id,
                     startDate: "2026-01-01",
                     endDate: "2026-12-31",
@@ -52,14 +55,15 @@ describe("Leases module", () => {
             expect(res.body.data.ownerId).toBe(property.ownerId);
         });
 
-        it("rejects lease creation for a non-available property", async () => {
-            const { ownerToken, tenant, property } = await setupOwnerTenantProperty({ propertyStatus: "occupied" });
+        it("rejects lease creation for a non-available unit", async () => {
+            const { ownerToken, tenant, property, unit } = await setupOwnerTenantProperty({ propertyStatus: "occupied" });
 
             const res = await testRequest()
                 .post("/api/v1/leases")
                 .set("Authorization", `Bearer ${ownerToken}`)
                 .send({
                     propertyId: property.id,
+                    unitId: unit.id,
                     tenantId: tenant.id,
                     startDate: "2026-01-01",
                     endDate: "2026-12-31",
@@ -70,13 +74,14 @@ describe("Leases module", () => {
         });
 
         it("allows creating an open-ended lease with no endDate, and an optional paymentDate", async () => {
-            const { ownerToken, tenant, property } = await setupOwnerTenantProperty();
+            const { ownerToken, tenant, property, unit } = await setupOwnerTenantProperty();
 
             const res = await testRequest()
                 .post("/api/v1/leases")
                 .set("Authorization", `Bearer ${ownerToken}`)
                 .send({
                     propertyId: property.id,
+                    unitId: unit.id,
                     tenantId: tenant.id,
                     startDate: "2026-01-01",
                     paymentDate: "2026-01-05",
@@ -382,6 +387,98 @@ describe("Leases module", () => {
 
             expect(checklistRes.status).toBe(200);
             expect(checklistRes.body.data.status).toBe("in_progress");
+        });
+    });
+
+    describe("Multi-unit properties", () => {
+        it("leases separate units independently and rolls up the property's status/occupiedUnits correctly", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id, status: "available", approvalStatus: "approved" });
+
+            const [unit1] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id)).limit(1);
+            if (!unit1) throw new Error("Expected createProperty to auto-create a default unit");
+
+            const addUnitRes = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ label: "Unit 2", rentAmount: 900 });
+            expect(addUnitRes.status).toBe(201);
+            const unit2Id = addUnitRes.body.data.id as string;
+
+            const { user: tenantA, accessToken: tenantAToken } = await createAuthedUser({ role: "tenant" });
+            const { user: tenantB, accessToken: tenantBToken } = await createAuthedUser({ role: "tenant" });
+
+            async function createAndSignLease(unitId: string, tenantId: string, tenantToken: string) {
+                const createRes = await testRequest()
+                    .post("/api/v1/leases")
+                    .set("Authorization", `Bearer ${ownerToken}`)
+                    .send({
+                        propertyId: property.id,
+                        unitId,
+                        tenantId,
+                        startDate: "2026-01-01",
+                        endDate: "2026-12-31",
+                        rentAmount: 800
+                    });
+                expect(createRes.status).toBe(201);
+                const leaseId = createRes.body.data.id as string;
+
+                await testRequest().post(`/api/v1/leases/${leaseId}/sign`).set("Authorization", `Bearer ${tenantToken}`);
+                const signRes = await testRequest()
+                    .post(`/api/v1/leases/${leaseId}/sign`)
+                    .set("Authorization", `Bearer ${ownerToken}`);
+                expect(signRes.status).toBe(200);
+                expect(signRes.body.data.status).toBe("active");
+
+                return leaseId;
+            }
+
+            const leaseAId = await createAndSignLease(unit1.id, tenantA.id, tenantAToken);
+
+            const propAfterFirst = await testRequest()
+                .get(`/api/v1/properties/${property.id}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(propAfterFirst.body.data.status).toBe("available");
+            expect(propAfterFirst.body.data.totalUnits).toBe(2);
+            expect(propAfterFirst.body.data.occupiedUnits).toBe(1);
+
+            await createAndSignLease(unit2Id, tenantB.id, tenantBToken);
+
+            const propAfterBoth = await testRequest()
+                .get(`/api/v1/properties/${property.id}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(propAfterBoth.body.data.status).toBe("occupied");
+            expect(propAfterBoth.body.data.occupiedUnits).toBe(2);
+
+            const conflictRes = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    unitId: unit2Id,
+                    tenantId: tenantA.id,
+                    startDate: "2026-01-01",
+                    endDate: "2026-12-31",
+                    rentAmount: 800
+                });
+            expect(conflictRes.status).toBe(409);
+
+            const termRes = await testRequest()
+                .post(`/api/v1/leases/${leaseAId}/termination-requests`)
+                .set("Authorization", `Bearer ${tenantAToken}`)
+                .send({});
+            expect(termRes.status).toBe(201);
+
+            const approveRes = await testRequest()
+                .patch(`/api/v1/leases/change-requests/${termRes.body.data.id}/approve`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(approveRes.status).toBe(200);
+
+            const propAfterTermination = await testRequest()
+                .get(`/api/v1/properties/${property.id}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(propAfterTermination.body.data.status).toBe("available");
+            expect(propAfterTermination.body.data.occupiedUnits).toBe(1);
         });
     });
 });

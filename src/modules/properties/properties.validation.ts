@@ -46,6 +46,11 @@ function checkCategoryTypeConsistency(
     }
 }
 
+const attributeSchema = z.object({
+    label: z.string().min(1),
+    value: z.string().min(1)
+});
+
 export const createPropertySchema = {
     body: z
         .object({
@@ -55,6 +60,9 @@ export const createPropertySchema = {
             category: z.enum(propertyCategoryValues),
             sizeSqm: z.number().positive().optional(),
             unitsCount: z.number().int().positive().optional(),
+            upi: z.string().min(1).optional(),
+            terms: z.array(z.string().min(1)).optional(),
+            attributes: z.array(attributeSchema).optional(),
             addressLine: z.string().min(1),
             city: z.string().min(1),
             state: z.string().min(1).optional(),
@@ -78,6 +86,9 @@ export const updatePropertySchema = {
             category: z.enum(propertyCategoryValues).optional(),
             sizeSqm: z.number().positive().optional(),
             unitsCount: z.number().int().positive().optional(),
+            upi: z.string().min(1).optional(),
+            terms: z.array(z.string().min(1)).optional(),
+            attributes: z.array(attributeSchema).optional(),
             addressLine: z.string().min(1).optional(),
             city: z.string().min(1).optional(),
             state: z.string().min(1).optional(),
@@ -91,6 +102,26 @@ export const updatePropertySchema = {
         })
         .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
         .superRefine((data, ctx) => checkCategoryTypeConsistency(data, ctx, { requireFields: false }))
+};
+
+export const createUnitSchema = {
+    body: z.object({
+        label: z.string().min(1),
+        bedrooms: z.number().int().nonnegative().optional(),
+        bathrooms: z.number().int().nonnegative().optional(),
+        rentAmount: z.number().positive()
+    })
+};
+
+export const updateUnitSchema = {
+    body: z
+        .object({
+            label: z.string().min(1).optional(),
+            bedrooms: z.number().int().nonnegative().optional(),
+            bathrooms: z.number().int().nonnegative().optional(),
+            rentAmount: z.number().positive().optional()
+        })
+        .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
 };
 
 export const listPropertiesSchema = {

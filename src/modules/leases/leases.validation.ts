@@ -5,11 +5,15 @@ const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-
 export const createLeaseSchema = {
     body: z.object({
         propertyId: z.string().uuid(),
+        unitId: z.string().uuid(),
         tenantId: z.string().uuid(),
         startDate: dateStringSchema,
         endDate: dateStringSchema.optional(),
         paymentDate: dateStringSchema.optional(),
-        rentAmount: z.number().positive()
+        rentAmount: z.number().positive(),
+        deposit: z.number().nonnegative().optional(),
+        momoNumber: z.string().optional(),
+        leasePeriodNote: z.string().optional()
     })
 };
 

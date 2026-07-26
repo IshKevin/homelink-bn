@@ -8,6 +8,7 @@ import * as storageService from "../../../services/storage.service";
 jest.mock("../../../services/storage.service", () => ({
     buildObjectKey: jest.fn().mockReturnValue("properties/mock-key.png"),
     uploadBuffer: jest.fn().mockResolvedValue("properties/mock-key.png"),
+    getPresignedDownloadUrl: jest.fn().mockResolvedValue("https://example.com/signed"),
     deleteObject: jest.fn().mockResolvedValue(undefined)
 }));
 
@@ -20,6 +21,9 @@ const validPropertyPayload = {
     type: "apartment",
     category: "residential",
     unitsCount: 4,
+    upi: "1/01/03/02/1156",
+    terms: ["12-month lease", "1 month deposit"],
+    attributes: [{ label: "Floor", value: "3rd Floor" }],
     addressLine: "123 Main St",
     city: "Kigali",
     country: "Rwanda",
@@ -39,6 +43,16 @@ describe("Properties module", () => {
             expect(res.status).toBe(201);
             expect(res.body.data.approvalStatus).toBe("pending");
             expect(res.body.data.status).toBe("available");
+            expect(res.body.data.upi).toBe(validPropertyPayload.upi);
+            expect(res.body.data.terms).toEqual(validPropertyPayload.terms);
+            expect(res.body.data.attributes).toEqual(validPropertyPayload.attributes);
+
+            const detailRes = await testRequest()
+                .get(`/api/v1/properties/${res.body.data.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(detailRes.status).toBe(200);
+            expect(detailRes.body.data.totalUnits).toBe(1);
+            expect(detailRes.body.data.occupiedUnits).toBe(0);
         });
 
         it("requires an ownerId when an agent creates on behalf of an owner", async () => {
@@ -282,6 +296,64 @@ describe("Properties module", () => {
                 .set("Authorization", `Bearer ${accessToken}`);
 
             expect(res.status).toBe(400);
+        });
+    });
+
+    describe("Property document", () => {
+        it("uploads a document, fetches its presigned URL, then deletes it", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+
+            const uploadRes = await testRequest()
+                .put(`/api/v1/properties/${property.id}/document`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .attach("document", Buffer.from("fake-pdf-bytes"), "deed.pdf");
+
+            expect(uploadRes.status).toBe(200);
+            expect(storageService.uploadBuffer).toHaveBeenCalled();
+
+            const getRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/document`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(getRes.status).toBe(200);
+            expect(getRes.body.data.url).toBe("https://example.com/signed");
+
+            const deleteRes = await testRequest()
+                .delete(`/api/v1/properties/${property.id}/document`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(deleteRes.status).toBe(200);
+
+            const afterDeleteRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/document`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(afterDeleteRes.status).toBe(404);
+        });
+    });
+
+    describe("Property units", () => {
+        it("adds a unit and updates it", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+
+            const createRes = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "Unit 2B", rentAmount: 750 });
+            expect(createRes.status).toBe(201);
+            expect(createRes.body.data.label).toBe("Unit 2B");
+
+            const listRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(listRes.status).toBe(200);
+            expect(listRes.body.data).toHaveLength(2);
+
+            const updateRes = await testRequest()
+                .patch(`/api/v1/properties/${property.id}/units/${createRes.body.data.id}`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ rentAmount: 800 });
+            expect(updateRes.status).toBe(200);
+            expect(updateRes.body.data.rentAmount).toBe("800.00");
         });
     });
 });

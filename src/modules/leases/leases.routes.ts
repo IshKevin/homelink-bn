@@ -47,14 +47,18 @@ router.use(authenticate);
  *   schemas:
  *     CreateLeaseInput:
  *       type: object
- *       required: [propertyId, tenantId, startDate, rentAmount]
+ *       required: [propertyId, unitId, tenantId, startDate, rentAmount]
  *       properties:
  *         propertyId: { type: string, format: uuid }
+ *         unitId: { type: string, format: uuid, description: "A specific unit on this property (must be available); see /properties/{id}/units" }
  *         tenantId: { type: string, format: uuid }
  *         startDate: { type: string, example: "2026-01-01" }
  *         endDate: { type: string, example: "2026-12-31", description: "Optional — omit for an open-ended lease" }
- *         paymentDate: { type: string, example: "2026-01-05", description: "Optional agreed recurring payment date" }
+ *         paymentDate: { type: string, example: "2026-01-05", description: "Optional agreed recurring payment date (day-of-month); drives invoice due dates" }
  *         rentAmount: { type: number }
+ *         deposit: { type: number, description: "Optional security deposit" }
+ *         momoNumber: { type: string, description: "Optional tenant mobile money number for rent collection" }
+ *         leasePeriodNote: { type: string, example: "12-month renewable lease" }
  * /leases:
  *   post:
  *     tags: [Leases]
@@ -78,7 +82,7 @@ router.use(authenticate);
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  *       409:
- *         description: Property is not available
+ *         description: Unit is not available
  *         content:
  *           application/json:
  *             schema:

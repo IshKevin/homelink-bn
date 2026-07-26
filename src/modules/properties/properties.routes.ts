@@ -4,16 +4,29 @@ import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
 import { ADMIN_ROLES } from "../../common/constants/roles";
-import { createPropertySchema, listPropertiesSchema, rejectPropertySchema, updatePropertySchema } from "./properties.validation";
+import {
+    createPropertySchema,
+    createUnitSchema,
+    listPropertiesSchema,
+    rejectPropertySchema,
+    updatePropertySchema,
+    updateUnitSchema
+} from "./properties.validation";
 import {
     addPropertyImagesHandler,
     approvePropertyHandler,
     createPropertyHandler,
+    createUnitHandler,
+    deletePropertyDocumentHandler,
     deletePropertyImageHandler,
+    getPropertyDocumentHandler,
     getPropertyHandler,
     listPropertiesHandler,
+    listUnitsHandler,
     rejectPropertyHandler,
-    updatePropertyHandler
+    setPropertyDocumentHandler,
+    updatePropertyHandler,
+    updateUnitHandler
 } from "./properties.controller";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -36,6 +49,16 @@ router.use(authenticate);
  *         category: { type: string, enum: [residential, commercial], description: "commercial requires type=commercial and sizeSqm; residential type=apartment requires unitsCount" }
  *         sizeSqm: { type: number, description: "Required when category is commercial" }
  *         unitsCount: { type: integer, description: "Required when type is apartment (doors/units in the building)" }
+ *         upi: { type: string, description: "Rwandan cadastral parcel ID, e.g. 1/01/03/02/1156" }
+ *         terms: { type: array, items: { type: string }, example: ["12-month lease", "2 months deposit"] }
+ *         attributes:
+ *           type: array
+ *           items:
+ *             type: object
+ *             properties:
+ *               label: { type: string }
+ *               value: { type: string }
+ *           example: [{ label: "Floor", value: "3rd Floor" }]
  *         addressLine: { type: string }
  *         city: { type: string }
  *         state: { type: string }
@@ -262,6 +285,172 @@ router.delete(
     "/:id/images/:imageId",
     authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
     deletePropertyImageHandler
+);
+
+/**
+ * @openapi
+ * /properties/{id}/units:
+ *   post:
+ *     tags: [Properties]
+ *     summary: Add a unit to a property (owner, assigned agent, house manager, or admin)
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [label, rentAmount]
+ *             properties:
+ *               label: { type: string }
+ *               bedrooms: { type: number }
+ *               bathrooms: { type: number }
+ *               rentAmount: { type: number }
+ *     responses:
+ *       201:
+ *         description: Unit created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *   get:
+ *     tags: [Properties]
+ *     summary: List a property's units
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: List of units
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.post(
+    "/:id/units",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    validate(createUnitSchema),
+    createUnitHandler
+);
+router.get("/:id/units", listUnitsHandler);
+
+/**
+ * @openapi
+ * /properties/{id}/units/{unitId}:
+ *   patch:
+ *     tags: [Properties]
+ *     summary: Update a property's unit
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: unitId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             description: Any subset of label, bedrooms, bathrooms, rentAmount
+ *     responses:
+ *       200:
+ *         description: Unit updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.patch(
+    "/:id/units/:unitId",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    validate(updateUnitSchema),
+    updateUnitHandler
+);
+
+/**
+ * @openapi
+ * /properties/{id}/document:
+ *   put:
+ *     tags: [Properties]
+ *     summary: Upload (or replace) a property's document, e.g. title deed
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               document: { type: string, format: binary }
+ *     responses:
+ *       200:
+ *         description: Document uploaded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *   get:
+ *     tags: [Properties]
+ *     summary: Get a presigned URL for the property's document
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Presigned URL
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       404:
+ *         description: This property has no document
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ *   delete:
+ *     tags: [Properties]
+ *     summary: Delete the property's document
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Document deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.put(
+    "/:id/document",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    upload.single("document"),
+    setPropertyDocumentHandler
+);
+router.get("/:id/document", getPropertyDocumentHandler);
+router.delete(
+    "/:id/document",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    deletePropertyDocumentHandler
 );
 
 /**

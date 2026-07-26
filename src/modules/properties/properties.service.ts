@@ -1,8 +1,8 @@
 import { and, desc, eq, gte, ilike, lte, sql } from "drizzle-orm";
 import { db } from "../../database";
-import { properties, propertyImages, users } from "../../database/schema";
+import { properties, propertyImages, propertyUnits, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
-import { buildObjectKey, deleteObject, uploadBuffer } from "../../services/storage.service";
+import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
@@ -10,6 +10,7 @@ import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
 type PropertyRow = typeof properties.$inferSelect;
+type PropertyUnitRow = typeof propertyUnits.$inferSelect;
 
 export interface CreatePropertyInput {
     title: string;
@@ -18,6 +19,9 @@ export interface CreatePropertyInput {
     category: PropertyRow["category"];
     sizeSqm?: number;
     unitsCount?: number;
+    upi?: string;
+    terms?: string[];
+    attributes?: { label: string; value: string }[];
     addressLine: string;
     city: string;
     state?: string;
@@ -37,6 +41,9 @@ export interface UpdatePropertyInput {
     category?: PropertyRow["category"];
     sizeSqm?: number;
     unitsCount?: number;
+    upi?: string;
+    terms?: string[];
+    attributes?: { label: string; value: string }[];
     addressLine?: string;
     city?: string;
     state?: string;
@@ -47,6 +54,20 @@ export interface UpdatePropertyInput {
     rentAmount?: number;
     rentConditions?: string;
     status?: PropertyRow["status"];
+}
+
+export interface CreateUnitInput {
+    label: string;
+    bedrooms?: number;
+    bathrooms?: number;
+    rentAmount: number;
+}
+
+export interface UpdateUnitInput {
+    label?: string;
+    bedrooms?: number;
+    bathrooms?: number;
+    rentAmount?: number;
 }
 
 export interface ListPropertiesFilters {
@@ -115,6 +136,9 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
             category: input.category,
             sizeSqm: input.sizeSqm !== undefined ? String(input.sizeSqm) : undefined,
             unitsCount: input.unitsCount,
+            upi: input.upi,
+            terms: input.terms,
+            attributes: input.attributes,
             addressLine: input.addressLine,
             city: input.city,
             state: input.state,
@@ -130,6 +154,15 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
         .returning();
 
     if (!property) throw AppError.internal("Failed to create property");
+
+    await db.insert(propertyUnits).values({
+        propertyId: property.id,
+        label: property.title,
+        bedrooms: property.bedrooms,
+        bathrooms: property.bathrooms,
+        rentAmount: property.rentAmount,
+        status: "available"
+    });
 
     await recordAction({ userId: creator.id, action: "property.create", entity: "property", entityId: property.id });
 
@@ -202,7 +235,7 @@ export async function listProperties(
 export async function getPropertyById(propertyId: string, requester: Requester) {
     const property = await db.query.properties.findFirst({
         where: eq(properties.id, propertyId),
-        with: { images: true }
+        with: { images: true, units: true }
     });
 
     if (!property) throw AppError.notFound("Property not found");
@@ -211,7 +244,85 @@ export async function getPropertyById(propertyId: string, requester: Requester) 
         throw AppError.notFound("Property not found");
     }
 
-    return property;
+    return {
+        ...property,
+        totalUnits: property.units.length,
+        occupiedUnits: property.units.filter((unit) => unit.status === "occupied").length
+    };
+}
+
+export async function recomputePropertyStatus(propertyId: string): Promise<void> {
+    const units = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, propertyId));
+    const hasAvailableUnit = units.length === 0 || units.some((unit) => unit.status === "available");
+
+    await db
+        .update(properties)
+        .set({ status: hasAvailableUnit ? "available" : "occupied", updatedAt: new Date() })
+        .where(eq(properties.id, propertyId));
+}
+
+async function getUnitOrThrow(unitId: string): Promise<PropertyUnitRow> {
+    const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unitId)).limit(1);
+    if (!unit) throw AppError.notFound("Unit not found");
+    return unit;
+}
+
+export async function createUnit(propertyId: string, requester: Requester, input: CreateUnitInput) {
+    const property = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    const [propertyRow] = property;
+    if (!propertyRow) throw AppError.notFound("Property not found");
+
+    await assertPropertyWriteAccess(propertyRow, requester);
+
+    const [unit] = await db
+        .insert(propertyUnits)
+        .values({
+            propertyId,
+            label: input.label,
+            bedrooms: input.bedrooms !== undefined ? String(input.bedrooms) : undefined,
+            bathrooms: input.bathrooms !== undefined ? String(input.bathrooms) : undefined,
+            rentAmount: String(input.rentAmount),
+            status: "available"
+        })
+        .returning();
+
+    if (!unit) throw AppError.internal("Failed to create unit");
+
+    await recomputePropertyStatus(propertyId);
+    await recordAction({ userId: requester.id, action: "property.unit.create", entity: "property", entityId: propertyId });
+
+    return unit;
+}
+
+export async function listUnits(propertyId: string) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+
+    return db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, propertyId)).orderBy(desc(propertyUnits.createdAt));
+}
+
+export async function updateUnit(propertyId: string, unitId: string, requester: Requester, input: UpdateUnitInput) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+
+    await assertPropertyWriteAccess(propertyRow, requester);
+
+    const unit = await getUnitOrThrow(unitId);
+    if (unit.propertyId !== propertyId) throw AppError.notFound("Unit not found");
+
+    const { bedrooms, bathrooms, rentAmount, ...rest } = input;
+    const updates: Partial<typeof propertyUnits.$inferInsert> = { ...rest };
+    if (bedrooms !== undefined) updates.bedrooms = String(bedrooms);
+    if (bathrooms !== undefined) updates.bathrooms = String(bathrooms);
+    if (rentAmount !== undefined) updates.rentAmount = String(rentAmount);
+    updates.updatedAt = new Date();
+
+    const [updated] = await db.update(propertyUnits).set(updates).where(eq(propertyUnits.id, unitId)).returning();
+    if (!updated) throw AppError.internal("Failed to update unit");
+
+    await recordAction({ userId: requester.id, action: "property.unit.update", entity: "property", entityId: propertyId, metadata: { unitId } });
+
+    return updated;
 }
 
 export async function addPropertyImages(propertyId: string, requester: Requester, files: Express.Multer.File[]) {
@@ -257,6 +368,53 @@ export async function deletePropertyImage(propertyId: string, imageId: string, r
         entityId: propertyId,
         metadata: { imageId }
     });
+}
+
+export async function setPropertyDocument(propertyId: string, requester: Requester, file: Express.Multer.File) {
+    const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!property) throw AppError.notFound("Property not found");
+
+    await assertPropertyWriteAccess(property, requester);
+
+    if (property.documentUrl) {
+        await deleteObject(property.documentUrl).catch(() => undefined);
+    }
+
+    const key = buildObjectKey("property-documents", file.originalname);
+    const url = await uploadBuffer(key, file.buffer, file.mimetype);
+
+    const [updated] = await db
+        .update(properties)
+        .set({ documentUrl: url, updatedAt: new Date() })
+        .where(eq(properties.id, propertyId))
+        .returning();
+
+    if (!updated) throw AppError.internal("Failed to save property document");
+
+    await recordAction({ userId: requester.id, action: "property.document.set", entity: "property", entityId: propertyId });
+
+    return updated;
+}
+
+export async function getPropertyDocument(propertyId: string): Promise<{ url: string }> {
+    const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!property) throw AppError.notFound("Property not found");
+    if (!property.documentUrl) throw AppError.notFound("This property has no document");
+
+    return { url: await getPresignedDownloadUrl(property.documentUrl) };
+}
+
+export async function deletePropertyDocument(propertyId: string, requester: Requester): Promise<void> {
+    const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!property) throw AppError.notFound("Property not found");
+
+    await assertPropertyWriteAccess(property, requester);
+    if (!property.documentUrl) throw AppError.notFound("This property has no document");
+
+    await deleteObject(property.documentUrl).catch(() => undefined);
+    await db.update(properties).set({ documentUrl: null, updatedAt: new Date() }).where(eq(properties.id, propertyId));
+
+    await recordAction({ userId: requester.id, action: "property.document.delete", entity: "property", entityId: propertyId });
 }
 
 export async function approveProperty(propertyId: string, admin: Requester) {

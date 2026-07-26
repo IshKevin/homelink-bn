@@ -99,6 +99,7 @@ invoicesRouter.get("/:id", authorize("tenant", "owner", "house_manager", ...ADMI
  *       required: [method]
  *       properties:
  *         method: { type: string, enum: [mobile_money, bank_transfer, cash], description: "cash and bank_transfer are held pending the landlord's approval (see /payments/{id}/approve); mobile_money settles instantly via the mocked provider" }
+ *         carrier: { type: string, enum: [mtn, airtel], description: "Only used when method is mobile_money; defaults to mtn" }
  *         payerPhone: { type: string }
  *         payerAccount: { type: string }
  * /invoices/{id}/pay:

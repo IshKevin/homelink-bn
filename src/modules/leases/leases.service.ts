@@ -1,28 +1,34 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../database";
-import { leaseChangeRequests, leaseDocuments, leases, moveRequests, properties, users } from "../../database/schema";
+import { leaseChangeRequests, leaseDocuments, leases, moveRequests, properties, propertyUnits, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
 import { renderHtmlToPdf } from "../../services/pdf.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
+import { recomputePropertyStatus } from "../properties/properties.service";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
 type LeaseRow = typeof leases.$inferSelect;
 type PropertyRow = typeof properties.$inferSelect;
+type PropertyUnitRow = typeof propertyUnits.$inferSelect;
 type ChangeRequestType = "renewal" | "termination";
 type ChangeRequestDecision = "approved" | "rejected";
 type ChecklistItem = { label: string; done: boolean };
 
 export interface CreateLeaseInput {
     propertyId: string;
+    unitId: string;
     tenantId: string;
     startDate: string;
     endDate?: string;
     paymentDate?: string;
     rentAmount: number;
+    deposit?: number;
+    momoNumber?: string;
+    leasePeriodNote?: string;
 }
 
 async function isEffectiveLeaseOwner(lease: LeaseRow, requester: Requester): Promise<boolean> {
@@ -64,6 +70,12 @@ async function getPropertyOrThrow(propertyId: string): Promise<PropertyRow> {
     const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!property) throw AppError.notFound("Property not found");
     return property;
+}
+
+async function getUnitOrThrow(unitId: string): Promise<PropertyUnitRow> {
+    const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unitId)).limit(1);
+    if (!unit) throw AppError.notFound("Unit not found");
+    return unit;
 }
 
 async function assertLeaseAccess(lease: LeaseRow, requester: Requester): Promise<void> {
@@ -129,8 +141,13 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
         throw AppError.forbidden("You do not have permission to create a lease for this property");
     }
 
-    if (property.status !== "available") {
-        throw AppError.conflict("Property is not available");
+    const unit = await getUnitOrThrow(input.unitId);
+    if (unit.propertyId !== property.id) {
+        throw AppError.badRequest("unitId does not belong to this property");
+    }
+
+    if (unit.status !== "available") {
+        throw AppError.conflict("Unit is not available");
     }
 
     const [tenant] = await db.select().from(users).where(eq(users.id, input.tenantId)).limit(1);
@@ -142,12 +159,16 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
         .insert(leases)
         .values({
             propertyId: property.id,
+            unitId: unit.id,
             tenantId: tenant.id,
             ownerId: property.ownerId,
             startDate: input.startDate,
             endDate: input.endDate,
             paymentDate: input.paymentDate,
             rentAmount: String(input.rentAmount),
+            deposit: input.deposit !== undefined ? String(input.deposit) : undefined,
+            momoNumber: input.momoNumber,
+            leasePeriodNote: input.leasePeriodNote,
             status: "pending_signatures"
         })
         .returning();
@@ -253,10 +274,8 @@ export async function signLease(leaseId: string, requester: Requester) {
     if (signed.tenantSignedAt && signed.ownerSignedAt) {
         const property = await getPropertyOrThrow(signed.propertyId);
 
-        await db
-            .update(properties)
-            .set({ status: "occupied", updatedAt: now })
-            .where(eq(properties.id, property.id));
+        await db.update(propertyUnits).set({ status: "occupied", updatedAt: now }).where(eq(propertyUnits.id, signed.unitId));
+        await recomputePropertyStatus(property.id);
 
         await db.insert(moveRequests).values({
             leaseId: signed.id,
@@ -421,7 +440,8 @@ export async function decideChangeRequest(
                 .update(leases)
                 .set({ status: "terminated", terminatedAt: now, updatedAt: now })
                 .where(eq(leases.id, lease.id));
-            await db.update(properties).set({ status: "available", updatedAt: now }).where(eq(properties.id, lease.propertyId));
+            await db.update(propertyUnits).set({ status: "available", updatedAt: now }).where(eq(propertyUnits.id, lease.unitId));
+            await recomputePropertyStatus(lease.propertyId);
         }
     } else {
         await db.update(leases).set({ status: "active", updatedAt: now }).where(eq(leases.id, lease.id));
@@ -584,7 +604,8 @@ export async function inspectMoveRequest(moveRequestId: string, inspector: Reque
 
     if (lease.status !== "terminated") {
         await db.update(leases).set({ status: "terminated", terminatedAt: now, updatedAt: now }).where(eq(leases.id, lease.id));
-        await db.update(properties).set({ status: "available", updatedAt: now }).where(eq(properties.id, lease.propertyId));
+        await db.update(propertyUnits).set({ status: "available", updatedAt: now }).where(eq(propertyUnits.id, lease.unitId));
+        await recomputePropertyStatus(lease.propertyId);
     }
 
     await recordAction({

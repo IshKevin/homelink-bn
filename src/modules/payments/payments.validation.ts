@@ -3,6 +3,7 @@ import { z } from "zod";
 export const payInvoiceSchema = {
     body: z.object({
         method: z.enum(["mobile_money", "bank_transfer", "cash"]),
+        carrier: z.enum(["mtn", "airtel"]).optional(),
         payerPhone: z.string().optional(),
         payerAccount: z.string().optional()
     })

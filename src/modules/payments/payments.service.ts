@@ -11,6 +11,7 @@ import { buildExcelBuffer, type ExcelColumn } from "../../services/excel.service
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
+import { nextDocumentNumber } from "../../common/utils/sequence.util";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
@@ -31,6 +32,7 @@ export interface ListPaymentsFilters {
 
 export interface PayInvoiceInput {
     method: "mobile_money" | "bank_transfer" | "cash";
+    carrier?: "mtn" | "airtel" | undefined;
     payerPhone?: string | undefined;
     payerAccount?: string | undefined;
 }
@@ -76,7 +78,8 @@ function buildReceiptHtml(payment: PaymentRow, invoice: InvoiceRow): string {
             <body>
                 <h1>Payment Receipt</h1>
                 <table>
-                    <tr><td>Receipt ID</td><td>${payment.id}</td></tr>
+                    <tr><td>Receipt No.</td><td>${payment.paymentNumber}</td></tr>
+                    <tr><td>Invoice No.</td><td>${invoice.invoiceNumber}</td></tr>
                     <tr><td>Invoice Period</td><td>${invoice.period}</td></tr>
                     <tr><td>Amount</td><td>${payment.amount}</td></tr>
                     <tr><td>Method</td><td>${payment.method}</td></tr>
@@ -189,9 +192,11 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
     }
 
     if (input.method === "cash" || input.method === "bank_transfer") {
+        const paymentNumber = await nextDocumentNumber("ACC-PAY");
         const [payment] = await db
             .insert(payments)
             .values({
+                paymentNumber,
                 invoiceId: invoice.id,
                 tenantId: tenant.id,
                 amount: invoice.amountDue,
@@ -225,17 +230,19 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
         return payment;
     }
 
-    const provider = getPaymentProvider(input.method);
+    const provider = getPaymentProvider(input.method, input.carrier);
     const result = await provider.initiate({
         amount: Number(invoice.amountDue),
-        reference: `INV-${invoice.id}`,
+        reference: invoice.invoiceNumber,
         payerPhone: input.payerPhone,
         payerAccount: input.payerAccount
     });
 
+    const paymentNumber = await nextDocumentNumber("ACC-PAY");
     const [payment] = await db
         .insert(payments)
         .values({
+            paymentNumber,
             invoiceId: invoice.id,
             tenantId: tenant.id,
             amount: invoice.amountDue,
@@ -414,6 +421,7 @@ export async function exportPayments(requester: Requester, filters: ListPayments
         .limit(5000);
 
     const columns: ExcelColumn[] = [
+        { header: "Payment Number", key: "PaymentNumber", width: 22 },
         { header: "Date", key: "Date", width: 15 },
         { header: "Amount", key: "Amount", width: 15 },
         { header: "Method", key: "Method", width: 18 },
@@ -422,6 +430,7 @@ export async function exportPayments(requester: Requester, filters: ListPayments
     ];
 
     const exportRows = rows.map((r) => ({
+        PaymentNumber: r.payment.paymentNumber,
         Date: format(r.payment.createdAt, "yyyy-MM-dd"),
         Amount: r.payment.amount,
         Method: r.payment.method,

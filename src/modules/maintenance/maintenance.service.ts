@@ -15,6 +15,7 @@ export interface CreateMaintenanceRequestInput {
     propertyId: string;
     title: string;
     description: string;
+    priority?: MaintenanceRequestRow["priority"] | undefined;
 }
 
 export interface ListMaintenanceRequestsFilters {
@@ -102,6 +103,7 @@ export async function createMaintenanceRequest(tenant: Requester, input: CreateM
             tenantId: tenant.id,
             title: input.title,
             description: input.description,
+            priority: input.priority ?? "medium",
             status: "submitted"
         })
         .returning();

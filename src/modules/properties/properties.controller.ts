@@ -62,6 +62,43 @@ export async function deletePropertyImageHandler(req: Request, res: Response) {
     return sendSuccess(res, { message: "Image deleted" });
 }
 
+export async function createUnitHandler(req: Request, res: Response) {
+    const unit = await propertiesService.createUnit(req.params["id"] as string, req.user!, req.body);
+    return sendSuccess(res, { statusCode: 201, message: "Unit created", data: unit });
+}
+
+export async function listUnitsHandler(req: Request, res: Response) {
+    const units = await propertiesService.listUnits(req.params["id"] as string);
+    return sendSuccess(res, { data: units });
+}
+
+export async function updateUnitHandler(req: Request, res: Response) {
+    const unit = await propertiesService.updateUnit(
+        req.params["id"] as string,
+        req.params["unitId"] as string,
+        req.user!,
+        req.body
+    );
+    return sendSuccess(res, { message: "Unit updated", data: unit });
+}
+
+export async function setPropertyDocumentHandler(req: Request, res: Response) {
+    const file = req.file as Express.Multer.File | undefined;
+    if (!file) throw AppError.badRequest("A document file is required");
+    const property = await propertiesService.setPropertyDocument(req.params["id"] as string, req.user!, file);
+    return sendSuccess(res, { message: "Document uploaded", data: property });
+}
+
+export async function getPropertyDocumentHandler(req: Request, res: Response) {
+    const document = await propertiesService.getPropertyDocument(req.params["id"] as string);
+    return sendSuccess(res, { data: document });
+}
+
+export async function deletePropertyDocumentHandler(req: Request, res: Response) {
+    await propertiesService.deletePropertyDocument(req.params["id"] as string, req.user!);
+    return sendSuccess(res, { message: "Document deleted" });
+}
+
 export async function approvePropertyHandler(req: Request, res: Response) {
     const property = await propertiesService.approveProperty(req.params["id"] as string, req.user!);
     return sendSuccess(res, { message: "Property approved", data: property });

@@ -4,7 +4,8 @@ export const createMaintenanceRequestSchema = {
     body: z.object({
         propertyId: z.string().uuid(),
         title: z.string().min(3),
-        description: z.string().min(3)
+        description: z.string().min(3),
+        priority: z.enum(["low", "medium", "high"]).optional()
     })
 };
 

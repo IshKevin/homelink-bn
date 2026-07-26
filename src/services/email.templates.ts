@@ -51,6 +51,20 @@ export function inviteTemplate(inviterName: string, roleLabel: string, link: str
     );
 }
 
+export function leadNotificationTemplate(
+    type: "contact" | "get_started",
+    fullName: string,
+    email: string,
+    details: string
+): string {
+    const title = type === "contact" ? "New contact message" : "New \"Get Started\" request";
+    return wrapTemplate(
+        title,
+        `<p>${fullName} (${email}) submitted the ${type === "contact" ? "contact" : "get started"} form.</p>
+         <p>${details}</p>`
+    );
+}
+
 export function newDeviceLoginTemplate(firstName: string, code: string): string {
     return wrapTemplate(
         "Confirm this sign-in",

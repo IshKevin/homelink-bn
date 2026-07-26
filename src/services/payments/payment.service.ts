@@ -1,15 +1,19 @@
 import type { PaymentProvider } from "./payment.provider";
-import { MockBankTransferProvider, MockMobileMoneyProvider } from "./mockProviders";
+import { MockAirtelMoneyProvider, MockBankTransferProvider, MockMobileMoneyProvider } from "./mockProviders";
 
-const providers: Record<string, PaymentProvider> = {
-    mobile_money: new MockMobileMoneyProvider(),
-    bank_transfer: new MockBankTransferProvider()
+const mobileMoneyProviders: Record<"mtn" | "airtel", PaymentProvider> = {
+    mtn: new MockMobileMoneyProvider(),
+    airtel: new MockAirtelMoneyProvider()
 };
 
-export function getPaymentProvider(method: "mobile_money" | "bank_transfer"): PaymentProvider {
-    const provider = providers[method];
-    if (!provider) {
-        throw new Error(`No payment provider registered for method: ${method}`);
+const bankTransferProvider = new MockBankTransferProvider();
+
+export function getPaymentProvider(
+    method: "mobile_money" | "bank_transfer",
+    carrier: "mtn" | "airtel" = "mtn"
+): PaymentProvider {
+    if (method === "mobile_money") {
+        return mobileMoneyProviders[carrier];
     }
-    return provider;
+    return bankTransferProvider;
 }

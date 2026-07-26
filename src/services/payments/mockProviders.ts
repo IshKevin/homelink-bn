@@ -20,10 +20,18 @@ async function simulate(providerName: string, input: InitiatePaymentInput): Prom
 }
 
 export class MockMobileMoneyProvider implements PaymentProvider {
-    readonly name = "mobile_money";
+    readonly name = "MTN Mobile Money";
 
     async initiate(input: InitiatePaymentInput): Promise<PaymentResult> {
-        return simulate("mobile_money", input);
+        return simulate("mtn_mobile_money", input);
+    }
+}
+
+export class MockAirtelMoneyProvider implements PaymentProvider {
+    readonly name = "Airtel Money";
+
+    async initiate(input: InitiatePaymentInput): Promise<PaymentResult> {
+        return simulate("airtel_money", input);
     }
 }
 

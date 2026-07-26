@@ -15,6 +15,7 @@ export const paymentApprovalStatusEnum = pgEnum("payment_approval_status", [
 
 export const invoices = pgTable("invoices", {
     id: uuid("id").defaultRandom().primaryKey(),
+    invoiceNumber: varchar("invoice_number", { length: 30 }).notNull().unique(),
     leaseId: uuid("lease_id")
         .notNull()
         .references(() => leases.id, { onDelete: "cascade" }),
@@ -31,6 +32,7 @@ export const invoices = pgTable("invoices", {
 
 export const payments = pgTable("payments", {
     id: uuid("id").defaultRandom().primaryKey(),
+    paymentNumber: varchar("payment_number", { length: 30 }).notNull().unique(),
     invoiceId: uuid("invoice_id")
         .notNull()
         .references(() => invoices.id, { onDelete: "cascade" }),

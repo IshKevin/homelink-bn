@@ -9,6 +9,7 @@ export const maintenanceStatusEnum = pgEnum("maintenance_status", [
     "in_progress",
     "completed"
 ]);
+export const maintenancePriorityEnum = pgEnum("maintenance_priority", ["low", "medium", "high"]);
 
 export const maintenanceRequests = pgTable("maintenance_requests", {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -20,6 +21,7 @@ export const maintenanceRequests = pgTable("maintenance_requests", {
         .references(() => users.id),
     title: varchar("title", { length: 255 }).notNull(),
     description: text("description").notNull(),
+    priority: maintenancePriorityEnum("priority").notNull().default("medium"),
     status: maintenanceStatusEnum("status").notNull().default("submitted"),
     assignedTo: uuid("assigned_to").references(() => users.id),
     itemsCost: numeric("items_cost", { precision: 12, scale: 2 }),

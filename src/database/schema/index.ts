@@ -7,3 +7,5 @@ export * from "./notifications.schema";
 export * from "./audit.schema";
 export * from "./settings.schema";
 export * from "./iam.schema";
+export * from "./sequences.schema";
+export * from "./leads.schema";

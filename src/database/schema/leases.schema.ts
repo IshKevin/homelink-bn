@@ -1,7 +1,7 @@
-import { boolean, date, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users.schema";
-import { properties } from "./properties.schema";
+import { properties, propertyUnits } from "./properties.schema";
 
 export const leaseStatusEnum = pgEnum("lease_status", [
     "draft",
@@ -22,6 +22,9 @@ export const leases = pgTable("leases", {
     propertyId: uuid("property_id")
         .notNull()
         .references(() => properties.id, { onDelete: "cascade" }),
+    unitId: uuid("unit_id")
+        .notNull()
+        .references(() => propertyUnits.id, { onDelete: "cascade" }),
     tenantId: uuid("tenant_id")
         .notNull()
         .references(() => users.id, { onDelete: "cascade" }),
@@ -32,6 +35,9 @@ export const leases = pgTable("leases", {
     endDate: date("end_date"),
     paymentDate: date("payment_date"),
     rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
+    deposit: numeric("deposit", { precision: 12, scale: 2 }),
+    momoNumber: varchar("momo_number", { length: 30 }),
+    leasePeriodNote: text("lease_period_note"),
     status: leaseStatusEnum("status").notNull().default("draft"),
     documentUrl: text("document_url"),
     documentsConfirmed: boolean("documents_confirmed").notNull().default(false),
@@ -101,6 +107,7 @@ export const moveRequests = pgTable("move_requests", {
 
 export const leasesRelations = relations(leases, ({ one, many }) => ({
     property: one(properties, { fields: [leases.propertyId], references: [properties.id] }),
+    unit: one(propertyUnits, { fields: [leases.unitId], references: [propertyUnits.id] }),
     tenant: one(users, { fields: [leases.tenantId], references: [users.id] }),
     owner: one(users, { fields: [leases.ownerId], references: [users.id] }),
     changeRequests: many(leaseChangeRequests),

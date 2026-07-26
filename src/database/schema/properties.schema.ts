@@ -1,4 +1,4 @@
-import { boolean, integer, numeric, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users.schema";
 
@@ -26,6 +26,10 @@ export const properties = pgTable("properties", {
     category: propertyCategoryEnum("category").notNull().default("residential"),
     sizeSqm: numeric("size_sqm", { precision: 10, scale: 2 }),
     unitsCount: integer("units_count"),
+    upi: varchar("upi", { length: 50 }),
+    terms: jsonb("terms").$type<string[]>().notNull().default([]),
+    attributes: jsonb("attributes").$type<{ label: string; value: string }[]>().notNull().default([]),
+    documentUrl: text("document_url"),
     addressLine: varchar("address_line", { length: 255 }).notNull(),
     city: varchar("city", { length: 100 }).notNull(),
     state: varchar("state", { length: 100 }),
@@ -57,12 +61,34 @@ export const propertyImages = pgTable("property_images", {
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 
+export const propertyUnits = pgTable("property_units", {
+    id: uuid("id").defaultRandom().primaryKey(),
+    propertyId: uuid("property_id")
+        .notNull()
+        .references(() => properties.id, { onDelete: "cascade" }),
+    label: varchar("label", { length: 100 }).notNull(),
+    bedrooms: numeric("bedrooms", { precision: 4, scale: 0 }),
+    bathrooms: numeric("bathrooms", { precision: 4, scale: 0 }),
+    rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
+    status: propertyStatusEnum("status").notNull().default("available"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+        .notNull()
+        .defaultNow()
+        .$onUpdate(() => new Date())
+});
+
 export const propertiesRelations = relations(properties, ({ one, many }) => ({
     owner: one(users, { fields: [properties.ownerId], references: [users.id] }),
     agent: one(users, { fields: [properties.agentId], references: [users.id] }),
-    images: many(propertyImages)
+    images: many(propertyImages),
+    units: many(propertyUnits)
 }));
 
 export const propertyImagesRelations = relations(propertyImages, ({ one }) => ({
     property: one(properties, { fields: [propertyImages.propertyId], references: [properties.id] })
+}));
+
+export const propertyUnitsRelations = relations(propertyUnits, ({ one }) => ({
+    property: one(properties, { fields: [propertyUnits.propertyId], references: [properties.id] })
 }));

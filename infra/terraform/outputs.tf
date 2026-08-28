@@ -49,16 +49,16 @@ output "ses_smtp_secret_access_key" {
 }
 
 output "ghcr_backend_repository" {
-  description = "Where CI pushes the backend image: ghcr.io/<owner>/<repo>."
+  description = "Where CI pushes the backend image: ghcr.io/<ghcr_username>/<repo>."
   # Recomputed rather than read from aws_ssm_parameter.app_ghcr_repository.value —
   # the AWS provider marks that attribute sensitive unconditionally regardless
   # of parameter type, which would force this whole output sensitive too.
-  value = "ghcr.io/${lower(var.github_backend_repo)}"
+  value = "ghcr.io/${local.ghcr_username}/${lower(split("/", var.github_backend_repo)[1])}"
 }
 
 output "ghcr_frontend_repository" {
   description = "Where CI pushes the frontend image, if github_frontend_repo is set."
-  value       = var.github_frontend_repo != null ? "ghcr.io/${lower(var.github_frontend_repo)}" : null
+  value       = var.github_frontend_repo != null ? "ghcr.io/${local.ghcr_username}/${lower(split("/", var.github_frontend_repo)[1])}" : null
 }
 
 output "jenkins_public_ip" {

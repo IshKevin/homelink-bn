@@ -271,13 +271,20 @@ resource "aws_ssm_parameter" "frontend_public_hostname" {
 # ---------------------------------------------------------------------------
 
 locals {
-  ghcr_username = coalesce(var.ghcr_username, split("/", var.github_backend_repo)[0])
+  # Lowercased: it's used to build ghcr.io/<this>/<repo> image paths, and
+  # GHCR (like all Docker registries) rejects uppercase repository names.
+  ghcr_username = lower(coalesce(var.ghcr_username, split("/", var.github_backend_repo)[0]))
 }
 
 resource "aws_ssm_parameter" "app_ghcr_repository" {
   name  = "${local.ssm_prefix}/app/ghcr_repository"
   type  = "String"
-  value = "ghcr.io/${lower(var.github_backend_repo)}"
+  # Namespace comes from ghcr_username (see locals.ghcr_username), not
+  # necessarily github_backend_repo's own owner — lets images be pushed
+  # under an account distinct from whoever owns the source repo (e.g. a
+  # frontend repo owned by someone else, pushed under the same GHCR
+  # namespace as the backend).
+  value = "ghcr.io/${local.ghcr_username}/${lower(split("/", var.github_backend_repo)[1])}"
 }
 
 resource "aws_ssm_parameter" "app_ghcr_username" {
@@ -300,7 +307,7 @@ resource "aws_ssm_parameter" "frontend_ghcr_repository" {
   count = var.github_frontend_repo != null ? 1 : 0
   name  = "${local.ssm_prefix}/frontend/ghcr_repository"
   type  = "String"
-  value = "ghcr.io/${lower(var.github_frontend_repo)}"
+  value = "ghcr.io/${local.ghcr_username}/${lower(split("/", var.github_frontend_repo)[1])}"
 }
 
 resource "aws_ssm_parameter" "frontend_ghcr_username" {

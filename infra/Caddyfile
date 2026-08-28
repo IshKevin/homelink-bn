@@ -1,0 +1,12 @@
+# App box reverse proxy: terminates TLS at the origin with a self-signed
+# cert (pair with Cloudflare's "Full" SSL/TLS mode) and forwards everything
+# to the API container over the compose network.
+:80 {
+	redir https://{host}{uri} permanent
+}
+
+:443 {
+	tls internal
+	encode gzip
+	reverse_proxy api:3000
+}

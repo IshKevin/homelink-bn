@@ -1,0 +1,38 @@
+# Template for the frontend box (Tier A). This repo (homelink-bn) is the
+# backend only — no frontend Dockerfile/image exists here to reference
+# directly. Copy this into the frontend repo, fill in `image`/`build`, and
+# deploy it to the frontend EC2 instance (see infra/terraform's
+# frontend_public_ip output and user-data/frontend.sh.tpl's render-env.sh,
+# which writes /opt/homelink-frontend/.env from
+# /homelink/<environment>/frontend/* SSM parameters).
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# GHCR_REPOSITORY comes from render-env.sh (SSM: <ssm_prefix>/frontend/ghcr_repository).
+# IMAGE_TAG is set by the CI/CD deploy step (see infra/frontend/deploy-frontend.yml.example)
+# — export it yourself for a manual deploy: `export IMAGE_TAG=<git-sha-or-tag>`.
+services:
+  frontend:
+    image: ${GHCR_REPOSITORY:?set by render-env.sh}:${IMAGE_TAG:?export before deploying}
+    container_name: homelink-frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "3000" # adjust to whatever port the Next.js SSR server actually listens on
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: homelink-frontend-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - frontend
+
+volumes:
+  caddy_data:

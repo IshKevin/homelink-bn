@@ -1,0 +1,9 @@
+:80 {
+	redir https://{host}{uri} permanent
+}
+
+:443 {
+	tls internal
+	encode gzip
+	reverse_proxy frontend:3000
+}

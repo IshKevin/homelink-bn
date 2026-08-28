@@ -1,0 +1,54 @@
+# Production overlay for the app box (Tier A). Run from the repo root as:
+#
+#   docker compose -f docker-compose.yml -f infra/docker-compose.prod.yml up -d
+#
+# Prerequisite: infra/terraform/user-data/app.sh.tpl's render-env.sh has
+# written /opt/homelink/.env (POSTGRES_PASSWORD included) — docker compose
+# reads that same .env both for env_file: services AND for ${VAR}
+# substitution below, since it lives in the project directory.
+#
+# Adds a Caddy reverse proxy terminating TLS on 443 (self-signed — pair with
+# Cloudflare's "Full" SSL/TLS mode, not "Full (strict)"), parameterizes the
+# Postgres password that the base compose file hardcodes for local dev, and
+# points every service at the image CI built and pushed to GHCR (ghcr.io)
+# instead of building on-box (the base file's `build:` block is left intact
+# as a manual fallback: `docker compose ... up -d --build` if a pull ever fails).
+#
+# GHCR_REPOSITORY comes from render-env.sh (SSM: <ssm_prefix>/app/ghcr_repository).
+# IMAGE_TAG is set by the CI/CD deploy step (see .github/workflows/deploy-backend.yml)
+# — export it yourself for a manual deploy: `export IMAGE_TAG=<git-sha-or-tag>`.
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  migrate:
+    image: ${GHCR_REPOSITORY:?set by render-env.sh}:${IMAGE_TAG:?export before deploying}
+
+  seed-admin:
+    image: ${GHCR_REPOSITORY:?set by render-env.sh}:${IMAGE_TAG:?export before deploying}
+
+  seed-demo:
+    image: ${GHCR_REPOSITORY:?set by render-env.sh}:${IMAGE_TAG:?export before deploying}
+
+  api:
+    image: ${GHCR_REPOSITORY:?set by render-env.sh}:${IMAGE_TAG:?export before deploying}
+
+  worker:
+    image: ${GHCR_REPOSITORY:?set by render-env.sh}:${IMAGE_TAG:?export before deploying}
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: homelink-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:

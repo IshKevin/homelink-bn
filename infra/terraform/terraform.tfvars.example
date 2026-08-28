@@ -1,0 +1,43 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+
+# Optional — leave unset (comment out) if you don't have a domain yet.
+# Everything domain-independent (all three boxes, S3, GHCR wiring, Jenkins)
+# still provisions fine; SES and all Cloudflare DNS records are skipped
+# until this is set. Add it later and re-run `terraform apply` — nothing
+# else needs to change.
+# domain_name = "homelink.example.com"
+
+# Cloudflare (docs/INFRASTRUCTURE.md §5) — only matters once domain_name is
+# set too (see above). Prefer exporting the token instead of committing it:
+#   export TF_VAR_cloudflare_api_token="..."
+cloudflare_zone_id    = ""
+# cloudflare_api_token = ""   # or export TF_VAR_cloudflare_api_token
+
+# Leave true to have Terraform manage DNS records in Cloudflare once a
+# domain is set; set false to manage DNS elsewhere and just read the
+# *_public_ip outputs.
+enable_cloudflare_dns = true
+
+alert_email = "devops@example.com"
+
+# Only set if you want key-based SSH as a fallback to SSM Session Manager.
+# ssh_cidr_blocks = ["203.0.113.4/32"]
+# ssh_key_name    = "my-ec2-keypair"
+
+# CI/CD (Jenkins -> GHCR -> SSM deploy). See infra/README.md.
+github_backend_repo = "IshKevin/homelink-bn" # only used to compute the GHCR image path
+# github_frontend_repo = "IshKevin/homelink-fn"   # separate repo; omit to skip its GHCR parameters
+
+# Jenkins UI is closed to the internet by default (reach it via SSM
+# port-forwarding). Only set this if you want direct HTTPS access too.
+# jenkins_admin_cidr_blocks = ["203.0.113.4/32"]
+
+# Only needed if the GHCR packages the boxes *pull* from are private (the
+# default for a token-authenticated push). Prefer exporting instead of
+# committing:
+#   export TF_VAR_ghcr_token="..."
+# Leave both unset if you make the packages public instead. Separately,
+# Jenkins itself needs its own GHCR PAT to *push* — that's configured as a
+# Jenkins credential (ID "ghcr-token"), not a Terraform variable.
+# ghcr_username = "IshKevin"
+# ghcr_token    = ""   # GitHub PAT with read:packages

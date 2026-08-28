@@ -35,10 +35,19 @@ cat > /etc/caddy-jenkins.Caddyfile <<'CADDYFILE'
 	redir https://{host}{uri} permanent
 }
 
+%{ if jenkins_public_hostname != "" }
+# jenkins_admin_cidr_blocks is set, so this box is reachable from the
+# internet (needed for a GitHub webhook, or direct UI access) — get a real
+# Let's Encrypt cert for it instead of a self-signed one.
+${jenkins_public_hostname} {
+	reverse_proxy localhost:8080
+}
+%{ else }
 :443 {
 	tls internal
 	reverse_proxy localhost:8080
 }
+%{ endif }
 CADDYFILE
 
 cat > /etc/systemd/system/caddy-jenkins.service <<'UNIT'

@@ -76,10 +76,19 @@ output "jenkins_url" {
   value = (
     length(var.jenkins_admin_cidr_blocks) == 0
     ? "https://${local.jenkins_public_ip} (self-signed cert; only reachable via SSM port-forwarding — see infra/README.md)"
-    : local.have_domain
-    ? "https://${var.jenkins_subdomain}.${var.domain_name}"
-    : "https://${local.jenkins_public_ip} (self-signed cert)"
+    : "https://${local.jenkins_public_hostname} (real Let's Encrypt cert)"
   )
+}
+
+output "jenkins_github_webhook_payload_url" {
+  description = "Only meaningful if jenkins_admin_cidr_blocks is non-empty. Add as a GitHub repo webhook (Settings -> Webhooks -> Add webhook): Payload URL = this, Content type = application/json, Secret = jenkins_github_webhook_secret, event = 'Just the push event'."
+  value       = length(var.jenkins_admin_cidr_blocks) == 0 ? null : "https://${local.jenkins_public_hostname}/github-webhook/"
+}
+
+output "jenkins_github_webhook_secret" {
+  description = "Shared secret for the GitHub webhook above — also configured into the Jenkins job so it validates incoming pushes."
+  value       = random_password.jenkins_github_webhook_secret.result
+  sensitive   = true
 }
 
 output "next_steps" {

@@ -68,6 +68,32 @@ resource "aws_eip" "frontend" {
   tags     = { Name = "${local.name_prefix}-frontend" }
 }
 
+# Allocated standalone (not tied to the instance's `instance` attribute)
+# and associated separately below, so its public_ip is known independently
+# of aws_instance.jenkins — that instance's own user_data needs this IP
+# (to derive a nip.io hostname for a real cert) which would otherwise be a
+# dependency cycle. Only allocated when direct HTTPS access is opted into
+# (jenkins_admin_cidr_blocks non-empty) — by default Jenkins is reached via
+# SSM port-forwarding, which addresses the box by instance ID, not IP, so a
+# *stable* address buys nothing and the auto-assigned public IP (still
+# needed for outbound internet with no NAT Gateway) is enough on its own.
+resource "aws_eip" "jenkins" {
+  count  = length(var.jenkins_admin_cidr_blocks) > 0 ? 1 : 0
+  domain = "vpc"
+  tags   = { Name = "${local.name_prefix}-jenkins" }
+}
+
+locals {
+  # Real public hostname for Jenkins's own Caddy (see user-data/jenkins.sh.tpl)
+  # to get a trusted Let's Encrypt cert instead of self-signed — only
+  # computable (and only actually reachable for ACME's HTTP-01 challenge)
+  # once jenkins_admin_cidr_blocks opens the box to the internet. Empty
+  # string when not opted in; the template falls back to `tls internal`.
+  jenkins_public_hostname = length(var.jenkins_admin_cidr_blocks) == 0 ? "" : (
+    local.have_domain ? "${var.jenkins_subdomain}.${var.domain_name}" : "${replace(aws_eip.jenkins[0].public_ip, ".", "-")}.nip.io"
+  )
+}
+
 resource "aws_instance" "jenkins" {
   ami                         = data.aws_ssm_parameter.al2023_arm64.value
   instance_type               = var.jenkins_instance_type
@@ -88,24 +114,29 @@ resource "aws_instance" "jenkins" {
   }
 
   user_data = templatefile("${path.module}/user-data/jenkins.sh.tpl", {
-    aws_region           = var.aws_region
-    app_instance_id      = aws_instance.app.id
-    frontend_instance_id = aws_instance.frontend.id
+    aws_region              = var.aws_region
+    app_instance_id         = aws_instance.app.id
+    frontend_instance_id    = aws_instance.frontend.id
+    jenkins_public_hostname = local.jenkins_public_hostname
   })
 
   tags = { Name = "${local.name_prefix}-jenkins", Backup = "true" }
 }
 
-# Only allocated when direct HTTPS access is opted into (jenkins_admin_cidr_blocks
-# non-empty) — by default Jenkins is reached via SSM port-forwarding, which
-# addresses the box by instance ID, not IP, so a *stable* address buys
-# nothing and the auto-assigned public IP (still needed for outbound
-# internet with no NAT Gateway) is enough on its own.
-resource "aws_eip" "jenkins" {
-  count    = length(var.jenkins_admin_cidr_blocks) > 0 ? 1 : 0
-  instance = aws_instance.jenkins.id
-  domain   = "vpc"
-  tags     = { Name = "${local.name_prefix}-jenkins" }
+resource "aws_eip_association" "jenkins" {
+  count         = length(var.jenkins_admin_cidr_blocks) > 0 ? 1 : 0
+  instance_id   = aws_instance.jenkins.id
+  allocation_id = aws_eip.jenkins[0].id
+}
+
+# Shared secret between GitHub's webhook and the Jenkins job's trigger
+# config — since jenkins_admin_cidr_blocks opens the box to the internet
+# for webhook delivery, this is what stops a stranger who finds the URL
+# from triggering arbitrary builds. See outputs.tf's
+# jenkins_github_webhook_payload_url/secret.
+resource "random_password" "jenkins_github_webhook_secret" {
+  length  = 40
+  special = false
 }
 
 locals {

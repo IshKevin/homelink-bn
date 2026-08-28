@@ -7,8 +7,8 @@
 # reads that same .env both for env_file: services AND for ${VAR}
 # substitution below, since it lives in the project directory.
 #
-# Adds a Caddy reverse proxy terminating TLS on 443 (self-signed — pair with
-# Cloudflare's "Full" SSL/TLS mode, not "Full (strict)"), parameterizes the
+# Adds a Caddy reverse proxy terminating TLS on 443 (a real Let's Encrypt
+# cert for PUBLIC_HOSTNAME — see infra/Caddyfile), parameterizes the
 # Postgres password that the base compose file hardcodes for local dev, and
 # points every service at the image CI built and pushed to GHCR (ghcr.io)
 # instead of building on-box (the base file's `build:` block is left intact
@@ -44,6 +44,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?set by render-env.sh}
     volumes:
       - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

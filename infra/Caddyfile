@@ -1,12 +1,18 @@
-# App box reverse proxy: terminates TLS at the origin with a self-signed
-# cert (pair with Cloudflare's "Full" SSL/TLS mode) and forwards everything
-# to the API container over the compose network.
+# App box reverse proxy: terminates TLS at the origin and forwards
+# everything to the API container over the compose network. PUBLIC_HOSTNAME
+# (from SSM app/public_hostname via render-env.sh, passed through by
+# infra/docker-compose.prod.yml's `caddy` service) is either the real
+# api.<domain_name> subdomain once one's registered, or a nip.io hostname
+# derived from the box's own Elastic IP while it isn't — either way it's a
+# real public hostname, so Caddy obtains a proper Let's Encrypt cert
+# automatically instead of falling back to a self-signed one. Pairs with
+# Cloudflare's "Full" (or "Full (strict)", now that the origin cert is
+# real) SSL/TLS mode once DNS is proxied through it.
 :80 {
 	redir https://{host}{uri} permanent
 }
 
-:443 {
-	tls internal
+{$PUBLIC_HOSTNAME} {
 	encode gzip
 	reverse_proxy api:3000
 }

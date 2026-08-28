@@ -75,6 +75,29 @@ variable "ssh_key_name" {
 }
 
 # ---------------------------------------------------------------------------
+# App bootstrap
+# ---------------------------------------------------------------------------
+
+variable "admin_email" {
+  description = "If set (together with admin_password), src/scripts/seed-admin.ts creates (or promotes an existing user to) an admin account with this email on the next deploy. Leave both unset to skip admin seeding."
+  type        = string
+  default     = null
+}
+
+variable "admin_password" {
+  description = "Password for admin_email's seeded admin account. Required if admin_email is set."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "sender_email" {
+  description = "Stopgap SES sender identity for before domain_name is registered: an individually-owned mailbox you've verified with `aws sesv2 create-email-identity` (see docs/INFRASTRUCTURE.md). Ignored once domain_name is set. Sending sandbox rules still apply (recipients must also be verified, or production access requested), and mail from a real personal mailbox routed through SES rather than that provider's own servers commonly fails DMARC/lands in spam — treat this as temporary."
+  type        = string
+  default     = null
+}
+
+# ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
 

@@ -76,16 +76,44 @@ resource "aws_ssm_parameter" "node_env" {
 resource "aws_ssm_parameter" "app_url" {
   name = "${local.ssm_prefix}/app/app_url"
   type = "String"
-  # Falls back to the Elastic IP while domain_name is unset — update by
-  # setting domain_name and re-applying, then re-running render-env.sh on
-  # the box.
-  value = local.have_domain ? "https://${var.api_subdomain}.${var.domain_name}" : "https://${aws_eip.app.public_ip}"
+  # Falls back to a nip.io hostname (see locals.app_public_hostname) while
+  # domain_name is unset — update by setting domain_name and re-applying,
+  # then re-running render-env.sh on the box.
+  value = "https://${local.app_public_hostname}"
+}
+
+# Consumed directly by infra/Caddyfile's `{$PUBLIC_HOSTNAME}` (via
+# infra/docker-compose.prod.yml's `caddy` service env_file) so Caddy
+# requests a real Let's Encrypt cert for whichever hostname app_url points
+# at, instead of a self-signed one.
+resource "aws_ssm_parameter" "public_hostname" {
+  name  = "${local.ssm_prefix}/app/public_hostname"
+  type  = "String"
+  value = local.app_public_hostname
 }
 
 resource "aws_ssm_parameter" "app_name" {
   name  = "${local.ssm_prefix}/app/app_name"
   type  = "String"
   value = "HomeLink"
+}
+
+# One-time admin bootstrap — consumed by src/scripts/seed-admin.ts (skips
+# itself if either is unset). Leave both unset after the first admin
+# exists; re-setting them just resets that account's password on the next
+# deploy (see seed-admin.ts's "promote existing user" branch).
+resource "aws_ssm_parameter" "admin_email" {
+  count = var.admin_email != null ? 1 : 0
+  name  = "${local.ssm_prefix}/app/admin_email"
+  type  = "String"
+  value = var.admin_email
+}
+
+resource "aws_ssm_parameter" "admin_password" {
+  count = var.admin_password != null ? 1 : 0
+  name  = "${local.ssm_prefix}/app/admin_password"
+  type  = "SecureString"
+  value = var.admin_password
 }
 
 resource "aws_ssm_parameter" "redis_url" {
@@ -189,9 +217,17 @@ resource "aws_ssm_parameter" "smtp_pass" {
 resource "aws_ssm_parameter" "smtp_from" {
   name = "${local.ssm_prefix}/app/smtp_from"
   type = "String"
-  # Placeholder while domain_name is unset — SES itself is skipped too (see
-  # ses.tf), so email sending doesn't actually work until both are set.
-  value = local.have_domain ? "HomeLink <no-reply@${var.domain_name}>" : "HomeLink <no-reply@example.com>"
+  # sender_email is a stopgap for before domain_name is set: SES can't verify
+  # a domain-based identity yet (see ses.tf), so the only way to send real
+  # mail is to verify one individually-owned mailbox as a sender identity
+  # (aws sesv2 create-email-identity) and point smtp_from at it. Note SES
+  # sandbox rules still apply until production access is granted — see
+  # docs/INFRASTRUCTURE.md's SES section — and mail "from" a real personal
+  # mailbox (e.g. a gmail.com address) sent via SES rather than that
+  # provider's own servers commonly fails DMARC/lands in spam at the
+  # recipient, so this is meant to be temporary. Once domain_name is set,
+  # this is ignored in favor of the real no-reply@<domain> identity.
+  value = local.have_domain ? "HomeLink <no-reply@${var.domain_name}>" : (var.sender_email != null ? "HomeLink <${var.sender_email}>" : "HomeLink <no-reply@example.com>")
 }
 
 # ---------------------------------------------------------------------------
@@ -208,13 +244,21 @@ resource "aws_ssm_parameter" "frontend_node_env" {
 resource "aws_ssm_parameter" "frontend_api_url" {
   name  = "${local.ssm_prefix}/frontend/api_url"
   type  = "String"
-  value = local.have_domain ? "https://${var.api_subdomain}.${var.domain_name}" : "https://${aws_eip.app.public_ip}"
+  value = "https://${local.app_public_hostname}"
 }
 
 resource "aws_ssm_parameter" "frontend_app_url" {
   name  = "${local.ssm_prefix}/frontend/app_url"
   type  = "String"
-  value = local.have_domain ? "https://${var.domain_name}" : "https://${aws_eip.frontend.public_ip}"
+  value = "https://${local.frontend_public_hostname}"
+}
+
+# Same purpose as app/public_hostname above, for the frontend box's own
+# Caddy/reverse-proxy setup (see infra/frontend/*.example) once deployed.
+resource "aws_ssm_parameter" "frontend_public_hostname" {
+  name  = "${local.ssm_prefix}/frontend/public_hostname"
+  type  = "String"
+  value = local.frontend_public_hostname
 }
 
 # ---------------------------------------------------------------------------

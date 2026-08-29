@@ -118,6 +118,18 @@ resource "aws_instance" "jenkins" {
     app_instance_id         = aws_instance.app.id
     frontend_instance_id    = aws_instance.frontend.id
     jenkins_public_hostname = local.jenkins_public_hostname
+
+    # --- Monitoring (Prometheus + Grafana), see monitoring section below ---
+    grafana_public_hostname = local.grafana_public_hostname
+    grafana_admin_password  = random_password.grafana_admin_password.result
+    app_private_ip          = aws_instance.app.private_ip
+    frontend_private_ip     = aws_instance.frontend.private_ip
+    app_public_hostname     = local.app_public_hostname
+    frontend_public_hostname = local.frontend_public_hostname
+    alert_email             = var.alert_email
+    ses_smtp_username  = aws_iam_access_key.ses_smtp.id
+    ses_smtp_password  = data.external.ses_smtp_password.result.password
+    alert_from_address = local.have_domain ? "no-reply@${var.domain_name}" : coalesce(var.sender_email, "no-reply@example.com")
   })
 
   tags = { Name = "${local.name_prefix}-jenkins", Backup = "true" }
@@ -139,6 +151,33 @@ resource "random_password" "jenkins_github_webhook_secret" {
   special = false
 }
 
+# Prometheus + Grafana run on the Jenkins box (see user-data/jenkins.sh.tpl)
+# and scrape node_exporter/cAdvisor/postgres_exporter/redis_exporter on the
+# app/frontend boxes over their private IPs — see network.tf's
+# jenkins-security-group-sourced ingress rules on those boxes.
+resource "random_password" "grafana_admin_password" {
+  length  = 24
+  special = false
+}
+
+# Converts aws_iam_access_key.ses_smtp's raw secret into an actual SMTP
+# password (see infra/scripts/ses-smtp-password-external.sh) at `terraform
+# apply` time, so the Jenkins box's user_data only ever needs the derived
+# password — never the master IAM secret — for Alertmanager's SMTP alerts.
+data "external" "ses_smtp_password" {
+  program = ["bash", "${path.module}/../scripts/ses-smtp-password-external.sh"]
+  query = {
+    secret = aws_iam_access_key.ses_smtp.secret
+    region = var.aws_region
+  }
+}
+
 locals {
+  # Same nip.io-or-real-domain pattern as app/frontend_public_hostname, but
+  # as a subdomain of the Jenkins hostname itself — nip.io resolves any
+  # subdomain of <ip-with-dashes>.nip.io to that same IP, so this needs no
+  # separate EIP or DNS record.
+  grafana_public_hostname = local.have_domain ? "grafana.${var.domain_name}" : "grafana.${local.jenkins_public_hostname}"
+
   jenkins_public_ip = length(var.jenkins_admin_cidr_blocks) > 0 ? aws_eip.jenkins[0].public_ip : aws_instance.jenkins.public_ip
 }

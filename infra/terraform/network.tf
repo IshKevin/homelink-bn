@@ -57,6 +57,43 @@ resource "aws_security_group" "app" {
     }
   }
 
+  # Monitoring: node_exporter (host metrics), cAdvisor (container metrics),
+  # postgres_exporter, redis_exporter — scraped by Prometheus on the
+  # Jenkins box over the VPC's private network, never the public internet.
+  # Source-restricted to the Jenkins security group specifically, not a
+  # CIDR block, so nothing else can reach these ports.
+  ingress {
+    description     = "node_exporter (Prometheus, from the Jenkins box only)"
+    from_port       = 9100
+    to_port         = 9100
+    protocol        = "tcp"
+    security_groups = [aws_security_group.jenkins.id]
+  }
+
+  ingress {
+    description     = "cAdvisor (Prometheus, from the Jenkins box only)"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.jenkins.id]
+  }
+
+  ingress {
+    description     = "postgres_exporter (Prometheus, from the Jenkins box only)"
+    from_port       = 9187
+    to_port         = 9187
+    protocol        = "tcp"
+    security_groups = [aws_security_group.jenkins.id]
+  }
+
+  ingress {
+    description     = "redis_exporter (Prometheus, from the Jenkins box only)"
+    from_port       = 9121
+    to_port         = 9121
+    protocol        = "tcp"
+    security_groups = [aws_security_group.jenkins.id]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -97,6 +134,24 @@ resource "aws_security_group" "frontend" {
       protocol    = "tcp"
       cidr_blocks = var.ssh_cidr_blocks
     }
+  }
+
+  # Monitoring — see aws_security_group.app's identical rules for why
+  # these are source-restricted to the Jenkins security group.
+  ingress {
+    description     = "node_exporter (Prometheus, from the Jenkins box only)"
+    from_port       = 9100
+    to_port         = 9100
+    protocol        = "tcp"
+    security_groups = [aws_security_group.jenkins.id]
+  }
+
+  ingress {
+    description     = "cAdvisor (Prometheus, from the Jenkins box only)"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.jenkins.id]
   }
 
   egress {

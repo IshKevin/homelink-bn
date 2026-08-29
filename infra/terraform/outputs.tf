@@ -91,6 +91,17 @@ output "jenkins_github_webhook_secret" {
   sensitive   = true
 }
 
+output "grafana_url" {
+  description = "Only reachable if jenkins_admin_cidr_blocks is non-empty (Grafana shares the Jenkins box's public exposure). Real Let's Encrypt cert."
+  value       = length(var.jenkins_admin_cidr_blocks) == 0 ? null : "https://${local.grafana_public_hostname}"
+}
+
+output "grafana_admin_password" {
+  description = "Grafana admin login — username is 'admin'."
+  value       = random_password.grafana_admin_password.result
+  sensitive   = true
+}
+
 output "next_steps" {
   value = <<-EOT
     ${local.have_domain ? "" : "0. domain_name is unset — SES and all Cloudflare DNS records were skipped. Steps 1-2 below don't apply yet; set domain_name and re-`apply` once you've registered one.\n    "}1. Convert the SES SMTP secret into an SMTP password and store it:

@@ -58,3 +58,65 @@ if [ -n "$GHCR_TOKEN" ] && [ "$GHCR_TOKEN" != "unset" ]; then
 fi
 SCRIPT
 chmod +x /usr/local/bin/render-env.sh
+
+# --- Monitoring agents (scraped by Prometheus on the Jenkins box) -------
+# Deliberately a separate compose project from /opt/homelink's app stack —
+# these run continuously regardless of app deploys/redeploys, and use
+# network_mode: host so node_exporter/cAdvisor see real host-level stats
+# and can reach Postgres/Redis on their 127.0.0.1-bound ports directly.
+mkdir -p /opt/monitoring-agents
+POSTGRES_PASSWORD=$(aws ssm get-parameter --region "${aws_region}" --name "${ssm_prefix}/app/postgres_password" --with-decryption --query 'Parameter.Value' --output text)
+cat > /opt/monitoring-agents/.env <<ENVFILE
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+ENVFILE
+chmod 600 /opt/monitoring-agents/.env
+
+cat > /opt/monitoring-agents/docker-compose.yml <<'EOF'
+services:
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:$${POSTGRES_PASSWORD}@127.0.0.1:5432/homelink?sslmode=disable"
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      REDIS_ADDR: "redis://127.0.0.1:6379"
+EOF
+
+docker compose -f /opt/monitoring-agents/docker-compose.yml --env-file /opt/monitoring-agents/.env up -d

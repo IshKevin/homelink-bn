@@ -57,3 +57,42 @@ if [ -n "$GHCR_TOKEN" ] && [ "$GHCR_TOKEN" != "unset" ]; then
 fi
 SCRIPT
 chmod +x /usr/local/bin/render-env.sh
+
+# --- Monitoring agents (scraped by Prometheus on the Jenkins box) -------
+# See app.sh.tpl's identical section for why this is a separate compose
+# project and why host networking is used. No Postgres/Redis here, so no
+# postgres_exporter/redis_exporter on this box.
+mkdir -p /opt/monitoring-agents
+cat > /opt/monitoring-agents/docker-compose.yml <<'EOF'
+services:
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+EOF
+
+docker compose -f /opt/monitoring-agents/docker-compose.yml up -d

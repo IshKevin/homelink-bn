@@ -130,6 +130,8 @@ export async function register(input: RegisterInput, meta: RequestMeta = {}) {
     return { user: toPublicUser(user), ...tokens };
 }
 
+const DEMO_EMAIL_DOMAIN = "@homelink.dev";
+
 export async function login(email: string, password: string, meta: RequestMeta = {}) {
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
     if (!user || !(await comparePassword(password, user.passwordHash))) {
@@ -139,7 +141,14 @@ export async function login(email: string, password: string, meta: RequestMeta =
         throw AppError.forbidden("This account has been deactivated");
     }
 
-    if (!(await isKnownDevice(user.id, meta))) {
+    // Seeded demo accounts (src/scripts/seed-demo-users.ts) are shared by
+    // many people testing from different devices/locations at once, so the
+    // new-device OTP challenge would trigger constantly and add friction to
+    // a flow meant to be frictionless. Real accounts always use this domain
+    // never a real user's — always go through the challenge below.
+    const isDemoAccount = user.email.endsWith(DEMO_EMAIL_DOMAIN);
+
+    if (!isDemoAccount && !(await isKnownDevice(user.id, meta))) {
         return issueLoginChallenge(user, meta);
     }
 

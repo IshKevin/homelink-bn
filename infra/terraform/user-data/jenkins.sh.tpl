@@ -326,6 +326,7 @@ fetch_dashboard() {
       # spellings directly at the datasource uid set above.
       sed -i \
         -e 's/$${DS_PROMETHEUS}/prometheus/g' \
+        -e 's/$${ds_prometheus}/prometheus/g' \
         -e 's/$${datasource}/prometheus/g' \
         "/opt/monitoring/grafana-provisioning/dashboards/json/$name.json" || true
     else

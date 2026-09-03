@@ -129,6 +129,11 @@ async function seedDemoData(idByEmail: Record<string, string>): Promise<void> {
     const tenantId = idByEmail["tenant.demo@homelink.dev"]!;
     const agentId = idByEmail["agent.demo@homelink.dev"]!;
     const managerId = idByEmail["manager.demo@homelink.dev"]!;
+
+    // Real payout number for owner.demo, so an actual MTN Disbursement can
+    // be tested end-to-end once real credentials are configured — the mock
+    // disbursement path (see payouts.service.ts) doesn't require this.
+    await db.update(users).set({ payoutMomoNumber: "0780000099" }).where(eq(users.id, ownerId));
     const adminId = idByEmail["admin.demo@homelink.dev"]!;
 
     const [existingAssignment] = await db

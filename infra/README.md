@@ -91,7 +91,7 @@ Same SSM Session Manager pattern (`frontend_instance_id`), `render-env.sh` write
 
 ## Notes / deliberate omissions
 
-- **No automatic `git clone`/`docker compose up` in user-data.** Terraform provisions infrastructure; deploying app code is a separate (CD) concern, matching docs/INFRASTRUCTURE.md §9's checklist where "launch the box" and "clone + compose up" are distinct steps.
+- **No automatic `git clone`/`docker compose up` in user-data.** Terraform provisions infrastructure; deploying app code is a separate (CD) concern, matching docs/INFRASTRUCTURE.md §10's checklist where "launch the box" and "clone + compose up" are distinct steps.
 - **TLS is self-signed at the origin**, terminated properly at Cloudflare's edge. Set Cloudflare's SSL/TLS mode to **Full** (not "Full (strict)", which requires a CA-signed origin cert) — see docs/INFRASTRUCTURE.md §4.
 - **`minio`/`mailpit` are left running** on the app box even though production points `S3_ENDPOINT`/`SMTP_HOST` at real S3/SES instead — removing them cleanly via a compose overlay is fragile (Compose's profile+`depends_on` interaction) for a few tens of MB of idle RAM. Not worth the complexity at this scale.
 - **`.rw` domain / AOS Kigali fallback** (docs/INFRASTRUCTURE.md §8) isn't provisioned here — reach for it only if one of the three documented triggers actually materializes.

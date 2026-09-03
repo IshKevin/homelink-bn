@@ -3,6 +3,7 @@ import { connection, JobNames, RENT_QUEUE_NAME } from "./queue";
 import { generateInvoicesJob } from "./handlers/generateInvoices.job";
 import { flagLatePaymentsJob } from "./handlers/flagLatePayments.job";
 import { sendRentRemindersJob } from "./handlers/sendRentReminders.job";
+import { processPayoutEventsJob } from "./handlers/processPayoutEvents.job";
 import { logger } from "../config/logger";
 
 export function createRentWorker(): Worker {
@@ -16,6 +17,8 @@ export function createRentWorker(): Worker {
                     return flagLatePaymentsJob();
                 case JobNames.SEND_RENT_REMINDERS:
                     return sendRentRemindersJob();
+                case JobNames.PROCESS_PAYOUT_EVENTS:
+                    return processPayoutEventsJob();
                 default:
                     logger.warn({ jobName: job.name }, "Unknown job received");
             }

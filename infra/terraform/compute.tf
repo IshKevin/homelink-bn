@@ -1,9 +1,12 @@
+# Not used directly for any instance's `ami` — see var.al2023_arm64_ami_id's
+# description for why. Kept so a deliberate upgrade has an easy source for
+# "the current latest AMI ID" to copy into that variable.
 data "aws_ssm_parameter" "al2023_arm64" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
 }
 
 resource "aws_instance" "app" {
-  ami                         = data.aws_ssm_parameter.al2023_arm64.value
+  ami                         = var.al2023_arm64_ami_id
   instance_type               = var.app_instance_type
   subnet_id                   = local.subnet_id
   vpc_security_group_ids      = [aws_security_group.app.id]
@@ -36,7 +39,7 @@ resource "aws_eip" "app" {
 }
 
 resource "aws_instance" "frontend" {
-  ami                         = data.aws_ssm_parameter.al2023_arm64.value
+  ami                         = var.al2023_arm64_ami_id
   instance_type               = var.frontend_instance_type
   subnet_id                   = local.subnet_id
   vpc_security_group_ids      = [aws_security_group.frontend.id]
@@ -95,7 +98,7 @@ locals {
 }
 
 resource "aws_instance" "jenkins" {
-  ami                         = data.aws_ssm_parameter.al2023_arm64.value
+  ami                         = var.al2023_arm64_ami_id
   instance_type               = var.jenkins_instance_type
   subnet_id                   = local.subnet_id
   vpc_security_group_ids      = [aws_security_group.jenkins.id]
@@ -120,16 +123,16 @@ resource "aws_instance" "jenkins" {
     jenkins_public_hostname = local.jenkins_public_hostname
 
     # --- Monitoring (Prometheus + Grafana), see monitoring section below ---
-    grafana_public_hostname = local.grafana_public_hostname
-    grafana_admin_password  = random_password.grafana_admin_password.result
-    app_private_ip          = aws_instance.app.private_ip
-    frontend_private_ip     = aws_instance.frontend.private_ip
-    app_public_hostname     = local.app_public_hostname
+    grafana_public_hostname  = local.grafana_public_hostname
+    grafana_admin_password   = random_password.grafana_admin_password.result
+    app_private_ip           = aws_instance.app.private_ip
+    frontend_private_ip      = aws_instance.frontend.private_ip
+    app_public_hostname      = local.app_public_hostname
     frontend_public_hostname = local.frontend_public_hostname
-    alert_email             = var.alert_email
-    ses_smtp_username  = aws_iam_access_key.ses_smtp.id
-    ses_smtp_password  = data.external.ses_smtp_password.result.password
-    alert_from_address = local.have_domain ? "no-reply@${var.domain_name}" : coalesce(var.sender_email, "no-reply@example.com")
+    alert_email              = var.alert_email
+    ses_smtp_username        = aws_iam_access_key.ses_smtp.id
+    ses_smtp_password        = data.external.ses_smtp_password.result.password
+    alert_from_address       = local.have_domain ? "no-reply@${var.domain_name}" : coalesce(var.sender_email, "no-reply@example.com")
   })
 
   tags = { Name = "${local.name_prefix}-jenkins", Backup = "true" }

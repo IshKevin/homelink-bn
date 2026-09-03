@@ -12,6 +12,7 @@ import dashboardRoutes from "../modules/dashboard/dashboard.routes";
 import reportsRoutes from "../modules/reports/reports.routes";
 import iamRoutes from "../modules/iam/iam.routes";
 import leadsRoutes from "../modules/leads/leads.routes";
+import webhooksRoutes from "../modules/payments/webhooks.routes";
 
 const router = Router();
 
@@ -47,5 +48,6 @@ router.use("/dashboard", dashboardRoutes);
 router.use("/reports", reportsRoutes);
 router.use("/iam", iamRoutes);
 router.use("/leads", leadsRoutes);
+router.use("/webhooks", webhooksRoutes);
 
 export default router;

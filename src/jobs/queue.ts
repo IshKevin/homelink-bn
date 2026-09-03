@@ -11,5 +11,6 @@ export const rentQueue = new Queue(RENT_QUEUE_NAME, { connection });
 export const JobNames = {
     GENERATE_INVOICES: "generate-invoices",
     FLAG_LATE_PAYMENTS: "flag-late-payments",
-    SEND_RENT_REMINDERS: "send-rent-reminders"
+    SEND_RENT_REMINDERS: "send-rent-reminders",
+    PROCESS_PAYOUT_EVENTS: "process-payout-events"
 } as const;

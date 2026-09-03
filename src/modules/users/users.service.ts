@@ -21,6 +21,7 @@ export interface UpdateProfileInput {
     lastName?: string;
     phone?: string;
     avatarUrl?: string;
+    payoutMomoNumber?: string;
 }
 
 export async function updateProfile(userId: string, input: UpdateProfileInput) {

@@ -91,6 +91,66 @@ variable "admin_password" {
   sensitive   = true
 }
 
+variable "al2023_arm64_ami_id" {
+  description = "Pinned AL2023 arm64 AMI ID for all three boxes. Deliberately NOT tracking AWS's 'latest' SSM alias directly (data.aws_ssm_parameter.al2023_arm64 in compute.tf) — that value changes whenever AWS publishes a new AL2023 build, which would silently force-replace every running instance on the next totally unrelated `terraform apply`. Bump this deliberately (e.g. to data.aws_ssm_parameter.al2023_arm64.value, or a specific newer AMI ID) only when you actually intend to roll all three boxes onto a new AMI."
+  type        = string
+  default     = "ami-093c8af2887992819"
+}
+
+variable "mtn_momo_target_environment" {
+  description = "MTN MoMo API target environment: \"sandbox\" while testing, the real MTN-assigned environment name (e.g. \"mtnrwanda\") once live."
+  type        = string
+  default     = "sandbox"
+}
+
+variable "mtn_momo_currency" {
+  description = "Currency MTN MoMo requests are made in. MTN's sandbox only accepts EUR regardless of target environment; production uses RWF."
+  type        = string
+  default     = "EUR"
+}
+
+variable "mtn_momo_collection_subscription_key" {
+  description = "MTN MoMo Collections product subscription key (momodeveloper.mtn.com). Leave unset to keep using the mock mobile-money provider."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "mtn_momo_collection_api_user" {
+  description = "MTN MoMo Collections API user (a UUID you provision once against the Collections subscription)."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "mtn_momo_collection_api_key" {
+  description = "MTN MoMo Collections API key, generated for mtn_momo_collection_api_user."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "mtn_momo_disbursement_subscription_key" {
+  description = "MTN MoMo Disbursements product subscription key — separate product/subscription from Collections. Leave unset to keep using the automated-mock payout path (see payouts.service.ts)."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "mtn_momo_disbursement_api_user" {
+  description = "MTN MoMo Disbursements API user."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "mtn_momo_disbursement_api_key" {
+  description = "MTN MoMo Disbursements API key, generated for mtn_momo_disbursement_api_user."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
 variable "sender_email" {
   description = "Stopgap SES sender identity for before domain_name is registered: an individually-owned mailbox you've verified with `aws sesv2 create-email-identity` (see docs/INFRASTRUCTURE.md). Ignored once domain_name is set. Sending sandbox rules still apply (recipients must also be verified, or production access requested), and mail from a real personal mailbox routed through SES rather than that provider's own servers commonly fails DMARC/lands in spam — treat this as temporary."
   type        = string

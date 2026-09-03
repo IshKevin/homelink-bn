@@ -49,6 +49,18 @@ data "aws_iam_policy_document" "app" {
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.app.arn]
   }
+
+  statement {
+    sid       = "PublishPaymentEvents"
+    actions   = ["events:PutEvents"]
+    resources = [aws_cloudwatch_event_bus.homelink.arn]
+  }
+
+  statement {
+    sid       = "ConsumePayoutEvents"
+    actions   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
+    resources = [aws_sqs_queue.payout_events.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "app" {

@@ -20,6 +20,10 @@ export const users = pgTable("users", {
     lastName: varchar("last_name", { length: 100 }).notNull(),
     phone: varchar("phone", { length: 30 }).notNull(),
     avatarUrl: text("avatar_url"),
+    // Landlord's own MTN MoMo number, distinct from leases.momoNumber (the
+    // tenant's number used to collect rent) — this is where automated rent
+    // disbursements (see payments.schema.ts's `payouts`) get sent.
+    payoutMomoNumber: varchar("payout_momo_number", { length: 30 }),
     isVerified: boolean("is_verified").notNull().default(false),
     isApproved: boolean("is_approved").notNull().default(true),
     isActive: boolean("is_active").notNull().default(true),

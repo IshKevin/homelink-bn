@@ -42,6 +42,7 @@ router.use(authenticate);
  *               lastName: { type: string }
  *               phone: { type: string }
  *               avatarUrl: { type: string }
+ *               payoutMomoNumber: { type: string, description: "Landlord's MTN MoMo number for automated rent disbursements" }
  *     responses:
  *       200:
  *         description: Profile updated

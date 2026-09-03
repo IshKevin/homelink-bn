@@ -10,6 +10,7 @@ import { buildObjectKey, getPresignedDownloadUrl, uploadBuffer } from "../../ser
 import { buildExcelBuffer, type ExcelColumn } from "../../services/excel.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
+import { publishPaymentSucceeded } from "../../services/events/eventBridge.service";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 import { nextDocumentNumber } from "../../common/utils/sequence.util";
 
@@ -136,9 +137,13 @@ export async function getInvoiceById(invoiceId: string, requester: Requester) {
     return invoice;
 }
 
-async function markPaymentSuccess(paymentId: string): Promise<PaymentRow> {
+export async function markPaymentSuccess(paymentId: string): Promise<PaymentRow> {
     const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
     if (!payment) throw AppError.notFound("Payment not found");
+
+    // Idempotent: MTN's webhook can retry delivery, and a webhook can race a
+    // status-poll fallback — do the receipt/notify/event work only once.
+    if (payment.status === "success") return payment;
 
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, payment.invoiceId)).limit(1);
     if (!invoice) throw AppError.notFound("Invoice not found");
@@ -175,7 +180,46 @@ async function markPaymentSuccess(paymentId: string): Promise<PaymentRow> {
             metadata: { invoiceId: invoice.id, paymentId: payment.id },
             sendEmail: true
         });
+
+        // Kicks off the automated landlord disbursement — see
+        // services/events/eventBridge.service.ts and
+        // jobs/handlers/processPayoutEvents.job.ts. Fully decoupled: this
+        // request doesn't wait on it, and its failure doesn't affect the
+        // payment that already succeeded.
+        await publishPaymentSucceeded({
+            paymentId: payment.id,
+            invoiceId: invoice.id,
+            leaseId: lease.id,
+            ownerId: lease.ownerId,
+            tenantId: payment.tenantId,
+            amount: payment.amount
+        });
     }
+
+    return updated ?? payment;
+}
+
+/** Webhook-driven failure path — see markPaymentSuccess's idempotency note. */
+export async function markPaymentFailed(paymentId: string, reason: string): Promise<PaymentRow> {
+    const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+    if (!payment) throw AppError.notFound("Payment not found");
+    if (payment.status !== "pending") return payment;
+
+    const [updated] = await db
+        .update(payments)
+        .set({ status: "failed", failureReason: reason })
+        .where(eq(payments.id, payment.id))
+        .returning();
+
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, payment.invoiceId)).limit(1);
+    await notify({
+        userId: payment.tenantId,
+        type: "payment.failed",
+        title: "Payment failed",
+        message: `Your payment${invoice ? ` for invoice period ${invoice.period}` : ""} failed: ${reason}.`,
+        metadata: { paymentId: payment.id },
+        sendEmail: true
+    });
 
     return updated ?? payment;
 }
@@ -234,7 +278,10 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
     const result = await provider.initiate({
         amount: Number(invoice.amountDue),
         reference: invoice.invoiceNumber,
-        payerPhone: input.payerPhone,
+        // Falls back to the number saved on the lease at signing time, so a
+        // tenant paying with their usual number doesn't have to re-supply it
+        // on every request.
+        payerPhone: input.payerPhone || lease.momoNumber || undefined,
         payerAccount: input.payerAccount
     });
 

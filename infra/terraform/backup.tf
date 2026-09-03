@@ -1,5 +1,5 @@
 # Nightly EBS snapshots of both boxes' root volumes — docs/INFRASTRUCTURE.md
-# §6/§9 step 7.
+# §6/§10 step 7.
 
 data "aws_iam_policy_document" "dlm_assume" {
   statement {

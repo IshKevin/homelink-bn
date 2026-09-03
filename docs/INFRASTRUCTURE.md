@@ -148,12 +148,31 @@ The law applies to HomeLink regardless of where servers sit — it covers proces
 **In-country fallback — AOS Ltd (Rwanda's National Data Center, Kigali):** a Korea Telecom-affiliated IaaS/colocation/DR provider already positioning itself as compliant with this law. Reach for it, don't default to it — three triggers actually justify it:
 
 1. NCSA declines or hesitates on the cross-border disclosure for a specific data category.
-2. A future National Bank of Rwanda rule requires transaction records tied to Rwandan mobile-money rails to be processed in-country (unsettled today — HomeLink calls MTN/Airtel MoMo APIs but isn't itself a licensed PSP, so the actual movement of money already stays local, narrowing rather than widening this risk).
+2. A future National Bank of Rwanda rule requires transaction records tied to Rwandan mobile-money rails to be processed in-country. **This is more of a live risk than it used to be** — see §9's flag on automated disbursement, which now briefly routes tenant rent through HomeLink's own MTN merchant account before forwarding it to the landlord, rather than HomeLink only ever calling the MoMo API on someone else's behalf.
 3. As a low-cost hedge: a nightly encrypted export of Rwanda-resident personal data mirrored to AOS's Kigali facility — a documented in-country copy without moving production off AWS.
 
 AOS pricing is quote-based (enterprise/B2B), not self-serve — budget for it only once a trigger materializes. Absent a trigger, the AWS `eu-west-1` architecture above, registered and disclosed properly, is the default.
 
-## 9. Provisioning checklist (Tier A)
+## 9. Payments: MTN MoMo collection + automated landlord disbursement
+
+> **Compliance flag, not legal advice — get this in front of legal/NCSA before real money flows through it.** See below.
+
+**Architecture**: a tenant pays rent via MTN MoMo Collections ("Request to Pay" — `src/services/payments/mtnMomoProvider.ts`). MTN's callback (`POST /webhooks/mtn/collection/:referenceId`) marks the payment successful, which publishes a `payment.succeeded` event to a custom **EventBridge** bus (`infra/terraform/payments.tf`). An EventBridge rule forwards it to an **SQS** queue; the app's existing BullMQ worker polls that queue every minute (`src/jobs/handlers/processPayoutEvents.job.ts`) and disburses the rent to the landlord's own MTN MoMo number via the Disbursements API (`src/modules/payments/payouts.service.ts`) — no admin approval step, no manual payout run.
+
+EventBridge → SQS rather than → Lambda is deliberate: the app already runs a worker process for scheduled jobs, so polling SQS from it reuses that model instead of adding a separate Lambda deployment for one consumer.
+
+**The compliance flag**: MTN has no tenant-to-landlord routing — money cannot move directly between their MoMo accounts. It **must** land in HomeLink's own MTN merchant account first, then get forwarded out. That's true even though the forwarding is instant and fully automated with no human touching it. Rwanda's regulatory treatment of a platform that (even momentarily, even automatically) holds client funds before forwarding them commonly triggers payment-service-provider (PSP) licensing requirements with the National Bank of Rwanda — a different regime than the NCSA data-protection registration in §8. Before this handles real tenant money:
+
+1. Confirm with a Rwanda-licensed fintech/payments lawyer whether this flow requires PSP licensing, an exemption, or a specific corporate structure (e.g. acting as a disclosed agent/facilitator rather than a principal).
+2. If licensing is required, budget the timeline for it — this is not a fast process, and running the automated pipeline against real money before resolving it is a real regulatory exposure, not just a hypothetical one.
+3. In the meantime, this can run safely in MTN's **sandbox** environment (the default — see `MTN_MOMO_TARGET_ENVIRONMENT`) with no real money involved, for development/demo purposes.
+
+**Configuration** — all via SSM (`infra/terraform/ssm.tf`), consistent with this doc's existing "secrets via SSM, not Secrets Manager" decision (§4):
+- `mtn_momo_collection_*` / `mtn_momo_disbursement_*` — separate MTN MoMo product subscriptions/credentials (Collections charges tenants, Disbursements pays landlords). Both default to an "unset" sentinel; the app falls back to mock providers for either one independently until real credentials are supplied (`terraform.tfvars`, or `aws ssm put-parameter --overwrite` directly, same as `ghcr_token`/`smtp_pass`).
+- `eventbridge_bus_name` / `payout_events_queue_url` — always set by Terraform; no manual step needed for the event pipeline itself, only for the MTN credentials.
+- A landlord sets their own payout number via `PATCH /users/me` (`payoutMomoNumber`) — separate from `leases.momoNumber`, which is the tenant's number used to *collect* rent.
+
+## 10. Provisioning checklist (Tier A)
 
 1. Register domain; point nameservers at Cloudflare; add DNS records once the app box has a static IP (Elastic IP).
 2. Launch `t4g.medium` (app) and `t4g.small` (frontend) EC2 instances, Amazon Linux or Ubuntu ARM AMI, Docker + Docker Compose installed.

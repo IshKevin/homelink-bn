@@ -42,5 +42,38 @@ export const env = {
         imageTag: process.env.IMAGE_TAG || "local"
     },
 
-    adminEmail: process.env.ADMIN_EMAIL || undefined
+    adminEmail: process.env.ADMIN_EMAIL || undefined,
+
+    // MTN MoMo Open API (momodeveloper.mtn.com) — Collections (charge tenant)
+    // and Disbursements (pay landlord) are separate product subscriptions
+    // with their own credentials. Left unset in an environment without real
+    // credentials yet; see services/payments/payment.service.ts for the
+    // mock-provider fallback that keeps that environment working anyway.
+    momo: {
+        baseUrl: process.env.MTN_MOMO_BASE_URL || "https://sandbox.momodeveloper.mtn.com",
+        targetEnvironment: process.env.MTN_MOMO_TARGET_ENVIRONMENT || "sandbox",
+        // Base URL MTN calls back to (X-Callback-Url) — this app's own public
+        // API origin, i.e. APP_URL, not MTN's.
+        callbackBaseUrl: process.env.MTN_MOMO_CALLBACK_BASE_URL || process.env.APP_URL || "http://localhost:3000",
+        currency: process.env.MTN_MOMO_CURRENCY || "EUR", // sandbox only accepts EUR; production uses RWF
+        collection: {
+            subscriptionKey: process.env.MTN_MOMO_COLLECTION_SUBSCRIPTION_KEY || "",
+            apiUser: process.env.MTN_MOMO_COLLECTION_API_USER || "",
+            apiKey: process.env.MTN_MOMO_COLLECTION_API_KEY || ""
+        },
+        disbursement: {
+            subscriptionKey: process.env.MTN_MOMO_DISBURSEMENT_SUBSCRIPTION_KEY || "",
+            apiUser: process.env.MTN_MOMO_DISBURSEMENT_API_USER || "",
+            apiKey: process.env.MTN_MOMO_DISBURSEMENT_API_KEY || ""
+        }
+    },
+
+    // EventBridge: published when a tenant payment succeeds, so disbursement
+    // to the landlord happens as a decoupled, automatic reaction rather than
+    // inline in the payment request — see jobs/handlers/processPayoutEvents.job.ts.
+    eventBridge: {
+        region: process.env.AWS_REGION || process.env.S3_REGION || "eu-west-1",
+        busName: process.env.EVENTBRIDGE_BUS_NAME || "",
+        payoutQueueUrl: process.env.PAYOUT_EVENTS_QUEUE_URL || ""
+    }
 };

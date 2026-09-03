@@ -17,5 +17,13 @@ export async function scheduleRepeatableJobs(): Promise<void> {
         {},
         { repeat: { pattern: "0 8 * * *" }, jobId: JobNames.SEND_RENT_REMINDERS }
     );
+    // Every minute: much tighter than the daily billing jobs above, since
+    // this is what makes landlord disbursement feel automatic rather than
+    // "sometime tomorrow".
+    await rentQueue.add(
+        JobNames.PROCESS_PAYOUT_EVENTS,
+        {},
+        { repeat: { pattern: "* * * * *" }, jobId: JobNames.PROCESS_PAYOUT_EVENTS }
+    );
     logger.info("Repeatable rent jobs scheduled");
 }

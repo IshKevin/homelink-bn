@@ -277,8 +277,8 @@ locals {
 }
 
 resource "aws_ssm_parameter" "app_ghcr_repository" {
-  name  = "${local.ssm_prefix}/app/ghcr_repository"
-  type  = "String"
+  name = "${local.ssm_prefix}/app/ghcr_repository"
+  type = "String"
   # Namespace comes from ghcr_username (see locals.ghcr_username), not
   # necessarily github_backend_repo's own owner — lets images be pushed
   # under an account distinct from whoever owns the source repo (e.g. a
@@ -326,4 +326,102 @@ resource "aws_ssm_parameter" "frontend_ghcr_token" {
   lifecycle {
     ignore_changes = [value]
   }
+}
+
+# ---------------------------------------------------------------------------
+# MTN MoMo (Collections charges the tenant, Disbursements pays the landlord)
+# and the EventBridge/SQS wiring between them — see docs/INFRASTRUCTURE.md
+# and infra/terraform/payments.tf. Credential params default to a
+# render-env.sh-recognized "unset" sentinel so the app falls back to its
+# mock providers until real MTN credentials are supplied.
+# ---------------------------------------------------------------------------
+
+resource "aws_ssm_parameter" "mtn_momo_base_url" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_base_url"
+  type  = "String"
+  value = local.have_domain && var.mtn_momo_target_environment != "sandbox" ? "https://momodeveloper.mtn.com" : "https://sandbox.momodeveloper.mtn.com"
+}
+
+resource "aws_ssm_parameter" "mtn_momo_target_environment" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_target_environment"
+  type  = "String"
+  value = var.mtn_momo_target_environment
+}
+
+resource "aws_ssm_parameter" "mtn_momo_currency" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_currency"
+  type  = "String"
+  value = var.mtn_momo_currency
+}
+
+resource "aws_ssm_parameter" "mtn_momo_callback_base_url" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_callback_base_url"
+  type  = "String"
+  value = "https://${local.app_public_hostname}"
+}
+
+resource "aws_ssm_parameter" "mtn_momo_collection_subscription_key" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_collection_subscription_key"
+  type  = "SecureString"
+  value = coalesce(var.mtn_momo_collection_subscription_key, "unset")
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "mtn_momo_collection_api_user" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_collection_api_user"
+  type  = "SecureString"
+  value = coalesce(var.mtn_momo_collection_api_user, "unset")
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "mtn_momo_collection_api_key" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_collection_api_key"
+  type  = "SecureString"
+  value = coalesce(var.mtn_momo_collection_api_key, "unset")
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "mtn_momo_disbursement_subscription_key" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_disbursement_subscription_key"
+  type  = "SecureString"
+  value = coalesce(var.mtn_momo_disbursement_subscription_key, "unset")
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "mtn_momo_disbursement_api_user" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_disbursement_api_user"
+  type  = "SecureString"
+  value = coalesce(var.mtn_momo_disbursement_api_user, "unset")
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "mtn_momo_disbursement_api_key" {
+  name  = "${local.ssm_prefix}/app/mtn_momo_disbursement_api_key"
+  type  = "SecureString"
+  value = coalesce(var.mtn_momo_disbursement_api_key, "unset")
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "eventbridge_bus_name" {
+  name  = "${local.ssm_prefix}/app/eventbridge_bus_name"
+  type  = "String"
+  value = aws_cloudwatch_event_bus.homelink.name
+}
+
+resource "aws_ssm_parameter" "payout_events_queue_url" {
+  name  = "${local.ssm_prefix}/app/payout_events_queue_url"
+  type  = "String"
+  value = aws_sqs_queue.payout_events.url
 }

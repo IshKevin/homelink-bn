@@ -39,6 +39,7 @@ async function isEffectiveLeaseOwner(lease: LeaseRow, requester: Requester): Pro
 
 export interface ListLeasesFilters {
     status?: LeaseRow["status"] | undefined;
+    propertyId?: string | undefined;
 }
 
 export interface RequestChangeInput {
@@ -195,6 +196,7 @@ export async function listLeases(
 ) {
     const conditions = [];
     if (filters.status) conditions.push(eq(leases.status, filters.status));
+    if (filters.propertyId) conditions.push(eq(leases.propertyId, filters.propertyId));
 
     if (requester.role === "agent") {
         const where = and(eq(properties.agentId, requester.id), ...conditions);

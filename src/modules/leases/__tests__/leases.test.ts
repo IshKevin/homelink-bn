@@ -481,4 +481,23 @@ describe("Leases module", () => {
             expect(propAfterTermination.body.data.occupiedUnits).toBe(1);
         });
     });
+
+    describe("GET /api/v1/leases", () => {
+        it("filters by propertyId", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: tenant } = await createAuthedUser({ role: "tenant" });
+            const propertyA = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            const propertyB = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            const leaseA = await createLease({ propertyId: propertyA.id, ownerId: owner.id, tenantId: tenant.id });
+            await createLease({ propertyId: propertyB.id, ownerId: owner.id, tenantId: tenant.id });
+
+            const res = await testRequest()
+                .get(`/api/v1/leases?propertyId=${propertyA.id}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+
+            expect(res.status).toBe(200);
+            expect(res.body.data).toHaveLength(1);
+            expect(res.body.data[0].id).toBe(leaseA.id);
+        });
+    });
 });

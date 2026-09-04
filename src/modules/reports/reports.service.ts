@@ -387,3 +387,42 @@ export async function getAgentPerformanceReport(_admin: Requester, range: Report
         ]
     };
 }
+
+/**
+ * Not date-ranged, unlike the reports above — this is a current-state
+ * directory of landlords, not an activity log for a period.
+ */
+export async function getLandlordPerformanceReport(_admin: Requester): Promise<ReportResult> {
+    const owners = await db.select().from(users).where(eq(users.role, "owner"));
+
+    const reportRows: Record<string, unknown>[] = [];
+
+    for (const owner of owners) {
+        const ownedProperties = await db.select().from(properties).where(eq(properties.ownerId, owner.id));
+
+        reportRows.push({
+            Name: `${owner.firstName} ${owner.lastName}`,
+            Email: owner.email,
+            Phone: owner.phone,
+            Properties: ownedProperties.length,
+            // Owners are always isApproved (only agents require approval —
+            // see auth.service.ts's register()), so isActive is the only real
+            // signal here: no separate "pending" state exists for this role.
+            Status: owner.isActive ? "Active" : "Suspended",
+            Registered: format(owner.createdAt, "yyyy-MM-dd")
+        });
+    }
+
+    return {
+        summary: { totalLandlords: reportRows.length },
+        rows: reportRows,
+        columns: [
+            { header: "Name", key: "Name", width: 25 },
+            { header: "Email", key: "Email", width: 30 },
+            { header: "Phone", key: "Phone", width: 18 },
+            { header: "Properties", key: "Properties", width: 12 },
+            { header: "Status", key: "Status", width: 12 },
+            { header: "Registered", key: "Registered", width: 15 }
+        ]
+    };
+}

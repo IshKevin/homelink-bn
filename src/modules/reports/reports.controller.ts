@@ -59,3 +59,8 @@ export async function getAgentPerformanceHandler(req: Request, res: Response) {
     const result = await reportsService.getAgentPerformanceReport(req.user!, { from: query.from, to: query.to });
     return respondWithReport(req, res, result, "Agent Performance", "agent-performance.xlsx");
 }
+
+export async function getLandlordPerformanceHandler(req: Request, res: Response) {
+    const result = await reportsService.getLandlordPerformanceReport(req.user!);
+    return respondWithReport(req, res, result, "Landlord Performance", "landlord-performance.xlsx");
+}

@@ -6,6 +6,7 @@ import { validate } from "../../common/middlewares/validate.middleware";
 import { reportQuerySchema } from "./reports.validation";
 import {
     getAgentPerformanceHandler,
+    getLandlordPerformanceHandler,
     getMaintenanceActivityHandler,
     getOccupancyHandler,
     getPaymentHistoryHandler,
@@ -234,5 +235,36 @@ router.get("/revenue-performance", authorize("owner", "admin"), validate(reportQ
  *               $ref: '#/components/schemas/ApiError'
  */
 router.get("/agent-performance", authorize(...ADMIN_ROLES), validate(reportQuerySchema), getAgentPerformanceHandler);
+
+/**
+ * @openapi
+ * /reports/landlord-performance:
+ *   get:
+ *     tags: [Reports]
+ *     summary: Get a platform-wide landlord directory/performance report (admin only)
+ *     description: Current-state snapshot (not date-ranged) — one row per owner with their property count, account status, and registration date.
+ *     parameters:
+ *       - in: query
+ *         name: format
+ *         schema: { type: string, enum: [json, excel] }
+ *     responses:
+ *       200:
+ *         description: Landlord performance report (JSON, or a binary xlsx when format=excel)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       403:
+ *         description: You do not have permission to perform this action
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.get("/landlord-performance", authorize(...ADMIN_ROLES), validate(reportQuerySchema), getLandlordPerformanceHandler);
 
 export default router;

@@ -95,6 +95,9 @@ router.use(authenticate);
  *         name: status
  *         schema: { type: string, enum: [draft, pending_signatures, active, pending_renewal, pending_termination, terminated, expired] }
  *       - in: query
+ *         name: propertyId
+ *         schema: { type: string, format: uuid }
+ *       - in: query
  *         name: page
  *         schema: { type: integer }
  *       - in: query

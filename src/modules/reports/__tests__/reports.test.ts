@@ -8,7 +8,7 @@ import {
 } from "../../../../tests/helpers/factories";
 import { eq } from "drizzle-orm";
 import { db } from "../../../database";
-import { payments, properties } from "../../../database/schema";
+import { payments, properties, users } from "../../../database/schema";
 import { nextDocumentNumber } from "../../../common/utils/sequence.util";
 
 jest.mock("../../../services/email.service", () => ({
@@ -292,6 +292,47 @@ describe("Reports module", () => {
             const agentRow = res.body.data.rows.find((r: { Agent: string }) => r.Agent === `${agent.firstName} ${agent.lastName}`);
             expect(agentRow.PropertiesManaged).toBe(1);
             expect(inRange.id).not.toBe(outOfRange.id);
+        });
+    });
+
+    describe("GET /api/v1/reports/landlord-performance", () => {
+        it("lists every owner with their property count and current status, admin only", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            await createProperty({ ownerId: owner.id, approvalStatus: "pending" });
+
+            const adminRes = await testRequest()
+                .get("/api/v1/reports/landlord-performance")
+                .set("Authorization", `Bearer ${adminToken}`);
+            expect(adminRes.status).toBe(200);
+
+            const ownerRow = adminRes.body.data.rows.find(
+                (r: { Name: string }) => r.Name === `${owner.firstName} ${owner.lastName}`
+            );
+            expect(ownerRow.Properties).toBe(2);
+            expect(ownerRow.Status).toBe("Active");
+            expect(ownerRow.Email).toBe(owner.email);
+
+            const ownerSelfRes = await testRequest()
+                .get("/api/v1/reports/landlord-performance")
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(ownerSelfRes.status).toBe(403);
+        });
+
+        it("reflects a deactivated landlord as Suspended", async () => {
+            const { user: owner } = await createAuthedUser({ role: "owner" });
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            await db.update(users).set({ isActive: false }).where(eq(users.id, owner.id));
+
+            const res = await testRequest()
+                .get("/api/v1/reports/landlord-performance")
+                .set("Authorization", `Bearer ${adminToken}`);
+
+            const ownerRow = res.body.data.rows.find(
+                (r: { Name: string }) => r.Name === `${owner.firstName} ${owner.lastName}`
+            );
+            expect(ownerRow.Status).toBe("Suspended");
         });
     });
 });

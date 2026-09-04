@@ -20,9 +20,14 @@ export async function listLeasesHandler(req: Request, res: Response) {
             | "pending_termination"
             | "terminated"
             | "expired";
+        propertyId?: string;
     };
 
-    const { rows, total } = await leasesService.listLeases(req.user!, { status: query.status }, { limit, offset });
+    const { rows, total } = await leasesService.listLeases(
+        req.user!,
+        { status: query.status, propertyId: query.propertyId },
+        { limit, offset }
+    );
 
     return sendSuccess(res, { data: rows, meta: buildPaginationMeta(page, limit, total) });
 }

@@ -16,6 +16,7 @@ import { sendMail } from "../../services/email.service";
 import { newDeviceLoginTemplate, passwordResetTemplate } from "../../services/email.templates";
 import { recordAction } from "../../services/audit.service";
 import { env } from "../../config/env";
+import { logger } from "../../config/logger";
 
 export interface RegisterInput {
     email: string;
@@ -186,10 +187,28 @@ export async function refresh(rawRefreshToken: string, meta: RequestMeta = {}) {
     const [stored] = await db
         .select()
         .from(refreshTokens)
-        .where(and(eq(refreshTokens.tokenHash, tokenHash), isNull(refreshTokens.revokedAt), gt(refreshTokens.expiresAt, new Date())))
+        .where(and(eq(refreshTokens.tokenHash, tokenHash), gt(refreshTokens.expiresAt, new Date())))
         .limit(1);
 
     if (!stored) {
+        throw AppError.unauthorized("Refresh token has been revoked or expired");
+    }
+
+    if (stored.revokedAt) {
+        // This exact token was already rotated away by an earlier refresh —
+        // seeing it again means either a harmless race or a stolen copy being
+        // replayed after the legitimate client moved on. Can't tell which, so
+        // treat it as theft: kill every other active session for this user
+        // rather than just rejecting this one request and letting a stolen
+        // token's owner keep trying.
+        await db
+            .update(refreshTokens)
+            .set({ revokedAt: new Date() })
+            .where(and(eq(refreshTokens.userId, stored.userId), isNull(refreshTokens.revokedAt)));
+        logger.warn(
+            { userId: stored.userId, tokenId: stored.id },
+            "Refresh token reuse detected — all active sessions revoked"
+        );
         throw AppError.unauthorized("Refresh token has been revoked or expired");
     }
 

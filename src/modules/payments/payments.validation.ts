@@ -4,14 +4,14 @@ export const payInvoiceSchema = {
     body: z.object({
         method: z.enum(["mobile_money", "bank_transfer", "cash"]),
         carrier: z.enum(["mtn", "airtel"]).optional(),
-        payerPhone: z.string().optional(),
-        payerAccount: z.string().optional()
+        payerPhone: z.string().max(30).optional(),
+        payerAccount: z.string().max(100).optional()
     })
 };
 
 export const rejectPaymentSchema = {
     body: z.object({
-        reason: z.string().min(3)
+        reason: z.string().min(3).max(5000)
     })
 };
 

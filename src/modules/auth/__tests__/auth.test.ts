@@ -129,6 +129,29 @@ describe("Auth module", () => {
             expect(reuseRes.status).toBe(401);
         });
 
+        it("treats replay of an already-rotated token as theft and revokes the session it rotated into", async () => {
+            await createUser({ email: "reuse@example.com", password: "Password123!" });
+            const loginRes = await testRequest().post("/api/v1/auth/login").send({
+                email: "reuse@example.com",
+                password: "Password123!"
+            });
+            const originalToken = loginRes.body.data.refreshToken;
+
+            // Legitimate client rotates once, getting a new token.
+            const firstRefreshRes = await testRequest().post("/api/v1/auth/refresh").send({ refreshToken: originalToken });
+            const rotatedToken = firstRefreshRes.body.data.refreshToken;
+
+            // An attacker who captured the original token before rotation replays it.
+            const replayRes = await testRequest().post("/api/v1/auth/refresh").send({ refreshToken: originalToken });
+            expect(replayRes.status).toBe(401);
+
+            // The legitimate client's own rotated token must now be dead too —
+            // otherwise reuse detection only punishes the attacker's dead end,
+            // not the compromised lineage.
+            const legitimateRetryRes = await testRequest().post("/api/v1/auth/refresh").send({ refreshToken: rotatedToken });
+            expect(legitimateRetryRes.status).toBe(401);
+        });
+
         it("logout revokes the refresh token", async () => {
             await createUser({ email: "logout@example.com", password: "Password123!" });
             const loginRes = await testRequest().post("/api/v1/auth/login").send({

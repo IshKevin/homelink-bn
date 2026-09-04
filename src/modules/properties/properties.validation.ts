@@ -3,6 +3,13 @@ import { z } from "zod";
 const propertyTypeValues = ["apartment", "house", "studio", "condo", "commercial", "other"] as const;
 const propertyCategoryValues = ["residential", "commercial"] as const;
 
+// Unbounded z.string() lets any authenticated user submit a multi-hundred-MB
+// payload on every request, bloating Postgres storage/WAL and anything that
+// later embeds the field (emails, PDFs). These caps are generous for real
+// usage but firmly rule that out.
+const shortText = (max = 255) => z.string().min(1).max(max);
+const longText = (max = 5000) => z.string().min(1).max(max);
+
 function checkCategoryTypeConsistency(
     data: {
         category?: string | undefined;
@@ -47,31 +54,31 @@ function checkCategoryTypeConsistency(
 }
 
 const attributeSchema = z.object({
-    label: z.string().min(1),
-    value: z.string().min(1)
+    label: shortText(),
+    value: shortText()
 });
 
 export const createPropertySchema = {
     body: z
         .object({
-            title: z.string().min(1),
-            description: z.string().min(1).optional(),
+            title: shortText(),
+            description: longText().optional(),
             type: z.enum(propertyTypeValues),
             category: z.enum(propertyCategoryValues),
             sizeSqm: z.number().positive().optional(),
             unitsCount: z.number().int().positive().optional(),
-            upi: z.string().min(1).optional(),
-            terms: z.array(z.string().min(1)).optional(),
-            attributes: z.array(attributeSchema).optional(),
-            addressLine: z.string().min(1),
-            city: z.string().min(1),
-            state: z.string().min(1).optional(),
-            country: z.string().min(1),
-            postalCode: z.string().min(1).optional(),
+            upi: shortText().optional(),
+            terms: z.array(shortText(500)).max(50).optional(),
+            attributes: z.array(attributeSchema).max(50).optional(),
+            addressLine: shortText(),
+            city: shortText(),
+            state: shortText().optional(),
+            country: shortText(),
+            postalCode: shortText().optional(),
             bedrooms: z.number().int().nonnegative().optional(),
             bathrooms: z.number().int().nonnegative().optional(),
             rentAmount: z.number().positive(),
-            rentConditions: z.string().min(1).optional(),
+            rentConditions: longText().optional(),
             ownerId: z.string().uuid().optional()
         })
         .superRefine((data, ctx) => checkCategoryTypeConsistency(data, ctx, { requireFields: true }))
@@ -80,24 +87,24 @@ export const createPropertySchema = {
 export const updatePropertySchema = {
     body: z
         .object({
-            title: z.string().min(1).optional(),
-            description: z.string().min(1).optional(),
+            title: shortText().optional(),
+            description: longText().optional(),
             type: z.enum(propertyTypeValues).optional(),
             category: z.enum(propertyCategoryValues).optional(),
             sizeSqm: z.number().positive().optional(),
             unitsCount: z.number().int().positive().optional(),
-            upi: z.string().min(1).optional(),
-            terms: z.array(z.string().min(1)).optional(),
-            attributes: z.array(attributeSchema).optional(),
-            addressLine: z.string().min(1).optional(),
-            city: z.string().min(1).optional(),
-            state: z.string().min(1).optional(),
-            country: z.string().min(1).optional(),
-            postalCode: z.string().min(1).optional(),
+            upi: shortText().optional(),
+            terms: z.array(shortText(500)).max(50).optional(),
+            attributes: z.array(attributeSchema).max(50).optional(),
+            addressLine: shortText().optional(),
+            city: shortText().optional(),
+            state: shortText().optional(),
+            country: shortText().optional(),
+            postalCode: shortText().optional(),
             bedrooms: z.number().int().nonnegative().optional(),
             bathrooms: z.number().int().nonnegative().optional(),
             rentAmount: z.number().positive().optional(),
-            rentConditions: z.string().min(1).optional(),
+            rentConditions: longText().optional(),
             status: z.enum(["available", "occupied"]).optional()
         })
         .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
@@ -106,7 +113,7 @@ export const updatePropertySchema = {
 
 export const createUnitSchema = {
     body: z.object({
-        label: z.string().min(1),
+        label: shortText(),
         bedrooms: z.number().int().nonnegative().optional(),
         bathrooms: z.number().int().nonnegative().optional(),
         rentAmount: z.number().positive()
@@ -116,7 +123,7 @@ export const createUnitSchema = {
 export const updateUnitSchema = {
     body: z
         .object({
-            label: z.string().min(1).optional(),
+            label: shortText().optional(),
             bedrooms: z.number().int().nonnegative().optional(),
             bathrooms: z.number().int().nonnegative().optional(),
             rentAmount: z.number().positive().optional()
@@ -129,7 +136,7 @@ export const listPropertiesSchema = {
         status: z.enum(["available", "occupied"]).optional(),
         type: z.enum(propertyTypeValues).optional(),
         category: z.enum(propertyCategoryValues).optional(),
-        city: z.string().min(1).optional(),
+        city: shortText().optional(),
         minRent: z.coerce.number().nonnegative().optional(),
         maxRent: z.coerce.number().nonnegative().optional(),
         ownerId: z.string().uuid().optional(),
@@ -140,6 +147,6 @@ export const listPropertiesSchema = {
 
 export const rejectPropertySchema = {
     body: z.object({
-        rejectionReason: z.string().min(3)
+        rejectionReason: longText().min(3)
     })
 };

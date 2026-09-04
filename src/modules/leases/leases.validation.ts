@@ -2,6 +2,12 @@ import { z } from "zod";
 
 const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD");
 
+// Bounded so a request can't fill Postgres storage/WAL with a giant string,
+// and momoNumber matches the DB column's varchar(30) so an over-limit value
+// fails validation cleanly instead of erroring at the DB layer.
+const shortText = (max = 255) => z.string().min(1).max(max);
+const longText = (max = 5000) => z.string().min(1).max(max);
+
 export const createLeaseSchema = {
     body: z.object({
         propertyId: z.string().uuid(),
@@ -12,8 +18,8 @@ export const createLeaseSchema = {
         paymentDate: dateStringSchema.optional(),
         rentAmount: z.number().positive(),
         deposit: z.number().nonnegative().optional(),
-        momoNumber: z.string().optional(),
-        leasePeriodNote: z.string().optional()
+        momoNumber: z.string().max(30).optional(),
+        leasePeriodNote: longText().optional()
     })
 };
 
@@ -22,7 +28,7 @@ export const renewalRequestSchema = {
         .object({
             proposedRent: z.number().positive().optional(),
             proposedEndDate: dateStringSchema.optional(),
-            reason: z.string().min(1).optional()
+            reason: longText().optional()
         })
         .refine((data) => data.proposedRent !== undefined || data.proposedEndDate !== undefined, {
             message: "At least one of proposedRent or proposedEndDate must be provided"
@@ -31,13 +37,13 @@ export const renewalRequestSchema = {
 
 export const terminationRequestSchema = {
     body: z.object({
-        reason: z.string().min(1).optional()
+        reason: longText().optional()
     })
 };
 
 export const decideChangeRequestRejectSchema = {
     body: z.object({
-        decisionNotes: z.string().min(3)
+        decisionNotes: longText().min(3)
     })
 };
 
@@ -52,17 +58,18 @@ export const updateChecklistSchema = {
         checklist: z
             .array(
                 z.object({
-                    label: z.string().min(1),
+                    label: shortText(),
                     done: z.boolean()
                 })
             )
             .min(1)
+            .max(200)
     })
 };
 
 export const inspectMoveRequestSchema = {
     body: z.object({
-        inspectionNotes: z.string().min(3)
+        inspectionNotes: longText().min(3)
     })
 };
 

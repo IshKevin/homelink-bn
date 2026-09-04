@@ -3,8 +3,8 @@ import { z } from "zod";
 export const createMaintenanceRequestSchema = {
     body: z.object({
         propertyId: z.string().uuid(),
-        title: z.string().min(3),
-        description: z.string().min(3),
+        title: z.string().min(3).max(255),
+        description: z.string().min(3).max(5000),
         priority: z.enum(["low", "medium", "high"]).optional()
     })
 };
@@ -25,14 +25,14 @@ export const completeMaintenanceRequestSchema = {
     body: z.object({
         itemsCost: z.number().nonnegative().optional(),
         laborCost: z.number().nonnegative().optional(),
-        completionNotes: z.string().optional()
+        completionNotes: z.string().max(5000).optional()
     })
 };
 
 export const submitFeedbackSchema = {
     body: z.object({
         rating: z.number().int().min(1).max(5),
-        comment: z.string().optional()
+        comment: z.string().max(5000).optional()
     })
 };
 

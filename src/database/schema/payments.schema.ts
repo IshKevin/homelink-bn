@@ -12,7 +12,7 @@ export const paymentApprovalStatusEnum = pgEnum("payment_approval_status", [
     "approved",
     "rejected"
 ]);
-export const payoutStatusEnum = pgEnum("payout_status", ["pending", "success", "failed"]);
+export const payoutStatusEnum = pgEnum("payout_status", ["pending", "success", "failed", "held"]);
 
 export const invoices = pgTable("invoices", {
     id: uuid("id").defaultRandom().primaryKey(),

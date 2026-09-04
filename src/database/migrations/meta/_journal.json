@@ -36,6 +36,13 @@
       "when": 1788456722019,
       "tag": "0004_add_payouts_and_payout_momo_number",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788526825672,
+      "tag": "0005_wandering_thor",
+      "breakpoints": true
     }
   ]
 }

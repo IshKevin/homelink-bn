@@ -18,6 +18,7 @@ import { notify } from "../../services/notification.service";
 import { sendMail } from "../../services/email.service";
 import { setPasswordTemplate } from "../../services/email.templates";
 import { env } from "../../config/env";
+import { releaseHeldPayouts } from "../payments/payouts.service";
 
 type UserRow = typeof users.$inferSelect;
 type IdentityVerificationRow = typeof identityVerifications.$inferSelect;
@@ -97,6 +98,10 @@ export async function updateUserStatus(adminId: string, userId: string, isActive
         metadata: { isActive },
         sendEmail: true
     });
+
+    if (isActive && updated.role === "owner") {
+        await releaseHeldPayouts(userId);
+    }
 
     return toPublicUser(updated);
 }

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."payout_status" ADD VALUE 'held';

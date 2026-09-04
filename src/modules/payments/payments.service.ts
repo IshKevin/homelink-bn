@@ -141,9 +141,13 @@ export async function markPaymentSuccess(paymentId: string): Promise<PaymentRow>
     const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
     if (!payment) throw AppError.notFound("Payment not found");
 
-    // Idempotent: MTN's webhook can retry delivery, and a webhook can race a
-    // status-poll fallback — do the receipt/notify/event work only once.
-    if (payment.status === "success") return payment;
+    // Idempotent against *retries* (MTN's webhook can redeliver, or race a
+    // status-poll fallback) — but NOT against status alone: the synchronous
+    // mock providers insert the payment already marked "success" before
+    // this function ever runs once, so status==="success" is reached on
+    // the very first (and only) call too. paidAt is only ever set by the
+    // finalization work below, so it's the real "already done" signal.
+    if (payment.paidAt) return payment;
 
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, payment.invoiceId)).limit(1);
     if (!invoice) throw AppError.notFound("Invoice not found");

@@ -27,9 +27,18 @@ function credentialsFor(product: MtnMomoProduct): ProductCredentials {
     return product === "collection" ? env.momo.collection : env.momo.disbursement;
 }
 
+// SSM stores unset credentials as the literal string "unset" (SSM rejects
+// truly empty values) — see infra/terraform/ssm.tf's mtn_momo_* params and
+// the identical convention for GHCR_TOKEN in user-data/*.sh.tpl. A plain
+// truthiness check would treat that sentinel as "configured", since it's a
+// non-empty string.
+function isRealValue(value: string): boolean {
+    return value !== "" && value !== "unset";
+}
+
 export function isMtnMomoConfigured(product: MtnMomoProduct): boolean {
     const c = credentialsFor(product);
-    return Boolean(c.subscriptionKey && c.apiUser && c.apiKey);
+    return isRealValue(c.subscriptionKey) && isRealValue(c.apiUser) && isRealValue(c.apiKey);
 }
 
 // Tokens expire (typically ~1h); cached per product and refreshed a minute

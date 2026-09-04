@@ -65,3 +65,26 @@ resource "aws_cloudwatch_metric_alarm" "jenkins_status_check" {
     InstanceId = aws_instance.jenkins.id
   }
 }
+
+# A message here means a landlord disbursement failed 5 times (see
+# payments.tf's redrive policy) and was never sent — without this, that
+# failure is silent and the landlord just doesn't get paid until someone
+# happens to look. See src/jobs/handlers/processPayoutEvents.job.ts.
+resource "aws_cloudwatch_metric_alarm" "payout_events_dlq_not_empty" {
+  alarm_name          = "${local.name_prefix}-payout-events-dlq-not-empty"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  alarm_description   = "A landlord payout event failed repeatedly and landed in the dead-letter queue — a real rent payment was not disbursed automatically."
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = aws_sqs_queue.payout_events_dlq.name
+  }
+}

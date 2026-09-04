@@ -294,9 +294,13 @@ export async function createUnit(propertyId: string, requester: Requester, input
     return unit;
 }
 
-export async function listUnits(propertyId: string) {
+export async function listUnits(propertyId: string, requester: Requester) {
     const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!propertyRow) throw AppError.notFound("Property not found");
+
+    if (requester.role === "tenant" && !(propertyRow.approvalStatus === "approved" && propertyRow.isActive)) {
+        throw AppError.notFound("Property not found");
+    }
 
     return db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, propertyId)).orderBy(desc(propertyUnits.createdAt));
 }
@@ -396,9 +400,14 @@ export async function setPropertyDocument(propertyId: string, requester: Request
     return updated;
 }
 
-export async function getPropertyDocument(propertyId: string): Promise<{ url: string }> {
+export async function getPropertyDocument(propertyId: string, requester: Requester): Promise<{ url: string }> {
     const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!property) throw AppError.notFound("Property not found");
+
+    // This is a legal ownership document (e.g. title deed), not marketplace
+    // browsing data — unlike getPropertyById, tenants get no special-cased
+    // access here at all, same circle as setPropertyDocument/deletePropertyDocument.
+    await assertPropertyWriteAccess(property, requester);
     if (!property.documentUrl) throw AppError.notFound("This property has no document");
 
     return { url: await getPresignedDownloadUrl(property.documentUrl) };

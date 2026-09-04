@@ -328,6 +328,27 @@ describe("Properties module", () => {
                 .set("Authorization", `Bearer ${accessToken}`);
             expect(afterDeleteRes.status).toBe(404);
         });
+
+        it("does not let an unrelated owner or a tenant fetch another owner's document", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            await testRequest()
+                .put(`/api/v1/properties/${property.id}/document`)
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .attach("document", Buffer.from("fake-pdf-bytes"), "deed.pdf");
+
+            const { accessToken: otherOwnerToken } = await createAuthedUser({ role: "owner" });
+            const otherOwnerRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/document`)
+                .set("Authorization", `Bearer ${otherOwnerToken}`);
+            expect(otherOwnerRes.status).toBe(403);
+
+            const { accessToken: tenantToken } = await createAuthedUser({ role: "tenant" });
+            const tenantRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/document`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(tenantRes.status).toBe(403);
+        });
     });
 
     describe("Property units", () => {
@@ -354,6 +375,17 @@ describe("Properties module", () => {
                 .send({ rentAmount: 800 });
             expect(updateRes.status).toBe(200);
             expect(updateRes.body.data.rentAmount).toBe("800.00");
+        });
+
+        it("does not let a tenant list units of a property that isn't approved and active", async () => {
+            const { user: owner } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id, approvalStatus: "pending" });
+
+            const { accessToken: tenantToken } = await createAuthedUser({ role: "tenant" });
+            const res = await testRequest()
+                .get(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(res.status).toBe(404);
         });
     });
 });

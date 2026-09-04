@@ -1,5 +1,5 @@
 import { testRequest } from "../../../../tests/helpers/app";
-import { createAuthedUser, createProperty } from "../../../../tests/helpers/factories";
+import { createAuthedUser, createLease, createProperty } from "../../../../tests/helpers/factories";
 import * as emailService from "../../../services/email.service";
 
 jest.mock("../../../services/email.service", () => ({
@@ -109,10 +109,12 @@ describe("IAM module", () => {
     });
 
     describe("Suspension requests", () => {
-        it("lets an owner request suspension of a user and an admin approve it, deactivating the account", async () => {
-            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+        it("lets an owner request suspension of their own tenant and an admin approve it, deactivating the account", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
             const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
             const { user: targetTenant } = await createAuthedUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id });
+            await createLease({ propertyId: property.id, ownerId: owner.id, tenantId: targetTenant.id });
 
             const requestRes = await testRequest()
                 .post("/api/v1/iam/suspension-requests")
@@ -136,6 +138,17 @@ describe("IAM module", () => {
                 .post("/api/v1/auth/login")
                 .send({ email: targetTenant.email, password: "Password123!" });
             expect(loginRes.status).toBe(403);
+        });
+
+        it("does not let an owner request suspension of a user who isn't their tenant or manager", async () => {
+            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: unrelatedTenant } = await createAuthedUser({ role: "tenant" });
+
+            const requestRes = await testRequest()
+                .post("/api/v1/iam/suspension-requests")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ targetUserId: unrelatedTenant.id, reason: "Trying to suspend someone else's tenant" });
+            expect(requestRes.status).toBe(403);
         });
     });
 });

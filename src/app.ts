@@ -19,7 +19,15 @@ const app = express();
 
 // Security & core middlewares
 app.use(helmet());
-app.use(cors());
+app.use(
+    cors(
+        env.corsAllowedOrigins.length > 0
+            ? { origin: env.corsAllowedOrigins }
+            : env.nodeEnv === "production"
+              ? { origin: false } // misconfigured (no CORS_ALLOWED_ORIGINS set) — fail closed, not open
+              : undefined // dev/test: reflect the request origin so local tooling keeps working
+    )
+);
 app.use(compression());
 app.use(express.json());
 app.use(cookieParser());

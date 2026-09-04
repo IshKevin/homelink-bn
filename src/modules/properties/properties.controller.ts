@@ -68,7 +68,7 @@ export async function createUnitHandler(req: Request, res: Response) {
 }
 
 export async function listUnitsHandler(req: Request, res: Response) {
-    const units = await propertiesService.listUnits(req.params["id"] as string);
+    const units = await propertiesService.listUnits(req.params["id"] as string, req.user!);
     return sendSuccess(res, { data: units });
 }
 
@@ -90,7 +90,7 @@ export async function setPropertyDocumentHandler(req: Request, res: Response) {
 }
 
 export async function getPropertyDocumentHandler(req: Request, res: Response) {
-    const document = await propertiesService.getPropertyDocument(req.params["id"] as string);
+    const document = await propertiesService.getPropertyDocument(req.params["id"] as string, req.user!);
     return sendSuccess(res, { data: document });
 }
 

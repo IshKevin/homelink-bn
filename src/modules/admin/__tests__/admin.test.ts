@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
-import { createAuthedUser, createProperty, createUser } from "../../../../tests/helpers/factories";
+import { createAuthedUser, createLease, createProperty, createUser } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
 import { identityVerifications, users } from "../../../database/schema";
 import * as emailService from "../../../services/email.service";
@@ -277,8 +277,10 @@ describe("Admin module", () => {
     describe("Suspension requests", () => {
         it("lets an admin approve a suspension request, deactivating the target user", async () => {
             const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
-            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
             const { user: target } = await createUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id });
+            await createLease({ propertyId: property.id, ownerId: owner.id, tenantId: target.id });
 
             const createRes = await testRequest()
                 .post("/api/v1/iam/suspension-requests")
@@ -304,8 +306,10 @@ describe("Admin module", () => {
 
         it("lets an admin reject a suspension request, leaving the target user active", async () => {
             const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
-            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
             const { user: target } = await createUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id });
+            await createLease({ propertyId: property.id, ownerId: owner.id, tenantId: target.id });
 
             const createRes = await testRequest()
                 .post("/api/v1/iam/suspension-requests")

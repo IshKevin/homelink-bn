@@ -98,6 +98,15 @@ resource "aws_ssm_parameter" "app_name" {
   value = "HomeLink"
 }
 
+# Locks down CORS to the actual frontend origin instead of allowing any
+# site's JS to call the API. app.ts fails closed (no origins allowed) if
+# this is ever empty in production, rather than falling back to "*".
+resource "aws_ssm_parameter" "cors_allowed_origins" {
+  name  = "${local.ssm_prefix}/app/cors_allowed_origins"
+  type  = "String"
+  value = "https://${local.frontend_public_hostname}"
+}
+
 # One-time admin bootstrap — consumed by src/scripts/seed-admin.ts (skips
 # itself if either is unset). Leave both unset after the first admin
 # exists; re-setting them just resets that account's password on the next

@@ -8,6 +8,15 @@ export const env = {
     appUrl: process.env.APP_URL || "http://localhost:3000",
     appName: process.env.APP_NAME || "HomeLink",
 
+    // Comma-separated allowlist (e.g. the frontend's public hostname). Empty
+    // means "reflect no origin" in production — CORS fails closed rather
+    // than open. Unset entirely in dev/test to keep local tooling (curl,
+    // Postman, the Swagger UI itself) working without a real origin.
+    corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS || "")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+
     databaseUrl: process.env.DATABASE_URL!,
 
     jwtSecret: process.env.JWT_SECRET!,

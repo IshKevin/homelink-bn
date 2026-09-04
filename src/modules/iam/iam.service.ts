@@ -1,7 +1,7 @@
 import { addDays } from "date-fns";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../../database";
-import { invites, managerAssignments, suspensionRequests, users } from "../../database/schema";
+import { invites, leases, managerAssignments, suspensionRequests, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { generateRawToken, hashToken } from "../../common/utils/jwt.util";
 import { hashPassword } from "../../common/utils/password.util";
@@ -217,6 +217,34 @@ export async function createSuspensionRequest(requester: Requester, targetUserId
 
     const [target] = await db.select().from(users).where(eq(users.id, targetUserId)).limit(1);
     if (!target) throw AppError.notFound("User not found");
+
+    const effectiveOwnerId = await resolveEffectiveOwnerId(requester);
+    let isRelated = false;
+    if (target.role === "tenant") {
+        const [lease] = await db
+            .select()
+            .from(leases)
+            .where(and(eq(leases.tenantId, targetUserId), eq(leases.ownerId, effectiveOwnerId)))
+            .limit(1);
+        isRelated = Boolean(lease);
+    } else if (target.role === "house_manager") {
+        const [assignment] = await db
+            .select()
+            .from(managerAssignments)
+            .where(
+                and(
+                    eq(managerAssignments.managerId, targetUserId),
+                    eq(managerAssignments.ownerId, effectiveOwnerId),
+                    eq(managerAssignments.status, "active")
+                )
+            )
+            .limit(1);
+        isRelated = Boolean(assignment);
+    }
+
+    if (!isRelated) {
+        throw AppError.forbidden("You can only request suspension for one of your own tenants or house managers");
+    }
 
     const [request] = await db
         .insert(suspensionRequests)

@@ -2,6 +2,7 @@ export async function renderHtmlToPdf(html: string): Promise<Buffer> {
     const { default: puppeteer } = await import("puppeteer");
     const browser = await puppeteer.launch({
         headless: true,
+        ...(process.env.PUPPETEER_EXECUTABLE_PATH ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH } : {}),
         args: ["--no-sandbox", "--disable-setuid-sandbox"]
     });
     try {

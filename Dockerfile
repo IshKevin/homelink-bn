@@ -1,5 +1,12 @@
 FROM node:22-alpine
 
+# puppeteer's own downloaded Chrome is glibc-linked and won't exec on Alpine's
+# musl libc (fails at runtime with "spawn ENOEXEC"). Use Alpine's native
+# chromium package instead and skip the bundled download entirely.
+RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
 WORKDIR /app
 
 COPY package*.json ./

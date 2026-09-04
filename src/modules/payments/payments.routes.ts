@@ -98,7 +98,7 @@ invoicesRouter.get("/:id", authorize("tenant", "owner", "house_manager", ...ADMI
  *       type: object
  *       required: [method]
  *       properties:
- *         method: { type: string, enum: [mobile_money, bank_transfer, cash], description: "cash and bank_transfer are held pending the landlord's approval (see /payments/{id}/approve); mobile_money settles instantly via the mocked provider" }
+ *         method: { type: string, enum: [mobile_money, bank_transfer, cash], description: "cash and bank_transfer are held pending the landlord's approval (see /payments/{id}/approve); mobile_money resolves via the real MTN MoMo integration when configured, a deterministic mock otherwise (see README)" }
  *         carrier: { type: string, enum: [mtn, airtel], description: "Only used when method is mobile_money; defaults to mtn" }
  *         payerPhone: { type: string }
  *         payerAccount: { type: string }

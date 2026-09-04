@@ -91,6 +91,7 @@ Moving from A to B is roughly a **3.2×** cost step, mainly the ALB and the loss
 - Security groups: only 443 (and 80→443 redirect) open to the internet; DB/Redis ports bound to the app box's own security group (mirrors `docker-compose.yml`'s `127.0.0.1:*` port bindings locally).
 - TLS is free either way — AWS Certificate Manager (Tier B, terminated at the ALB) or Cloudflare edge certificates (Tier A, terminated at Cloudflare, origin can stay HTTP or self-signed behind Cloudflare's Full-strict mode).
 - Secrets via **SSM Parameter Store**, not Secrets Manager — standard parameters are free, Secrets Manager charges $0.40/secret/month, which adds up across `JWT_SECRET`, `JWT_REFRESH_SECRET`, `DATABASE_URL`, and S3/SMTP credentials for no benefit at this scale. Inject as environment variables at container start, same shape as this repo's `env_file: .env`.
+- **CORS is locked to the actual frontend origin**, not wildcard-open. `CORS_ALLOWED_ORIGINS` (SSM `<prefix>/app/cors_allowed_origins`) is set by Terraform to `https://${local.frontend_public_hostname}` — if it's ever empty in production, `app.ts` fails closed (no origins allowed) rather than falling back to allowing any site's JS to call the API.
 
 ## 5. DNS & CDN
 
@@ -108,9 +109,10 @@ Register the domain wherever's cheapest (check Cloudflare's own registrar, close
 
 ## 6. Observability & backups
 
-- **CloudWatch**: 7-day log retention, no custom dashboards, rely on free EC2 status-check alarms for "is the box alive" (Tier A) or standard ECS/ALB metrics (Tier B).
+- **CloudWatch**: 7-day log retention, free EC2 status-check alarms for "is the box alive" on all three boxes (Tier A) or standard ECS/ALB metrics (Tier B), plus an alarm on the payout dead-letter queue (`infra/terraform/monitoring.tf`'s `payout_events_dlq_not_empty`) — a landlord disbursement that failed 5 times (see §9's redrive policy) is a materially different, higher-priority signal than "is the box alive," since it means a real rent payment silently never reached the landlord. All alarms notify the same SNS topic/email (`var.alert_email`); an unconfirmed SNS email subscription delivers nothing silently, so confirm it after every fresh `terraform apply` that sets one.
 - **Backups**: nightly EBS snapshot of both boxes (Tier A) or RDS automated backups (Tier B, included in the RDS cost above).
 - **ECR**: container registry for the Docker images built from this repo's `Dockerfile` (Tier B only — Tier A pulls/builds directly on the box via `docker compose`).
+- **A fuller Prometheus/Grafana/Alertmanager stack also runs on the Jenkins box**, scraping all three boxes and self-monitoring Jenkins — this section doesn't yet describe it in detail (dashboards, scrape targets, alert rules). See `infra/terraform/user-data/jenkins.sh.tpl` directly until this gets written up properly; tracked in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 ## 7. Decisions baked into these numbers
 
@@ -160,6 +162,10 @@ AOS pricing is quote-based (enterprise/B2B), not self-serve — budget for it on
 **Architecture**: a tenant pays rent via MTN MoMo Collections ("Request to Pay" — `src/services/payments/mtnMomoProvider.ts`). MTN's callback (`POST /webhooks/mtn/collection/:referenceId`) marks the payment successful, which publishes a `payment.succeeded` event to a custom **EventBridge** bus (`infra/terraform/payments.tf`). An EventBridge rule forwards it to an **SQS** queue; the app's existing BullMQ worker polls that queue every minute (`src/jobs/handlers/processPayoutEvents.job.ts`) and disburses the rent to the landlord's own MTN MoMo number via the Disbursements API (`src/modules/payments/payouts.service.ts`) — no admin approval step, no manual payout run.
 
 EventBridge → SQS rather than → Lambda is deliberate: the app already runs a worker process for scheduled jobs, so polling SQS from it reuses that model instead of adding a separate Lambda deployment for one consumer.
+
+**Webhooks aren't trusted directly.** MTN's callback payload isn't signed, and the reference ID isn't a secret (the paying tenant sees their own `providerReference` in the `pay` response) — so `mtnCollectionCallbackHandler`/`mtnDisbursementCallbackHandler` only use the callback as a trigger to call MTN's own status endpoint (`getRequestToPayStatus`/`getTransferStatus`) with this app's own credentials, and that response — not the incoming body — decides the outcome. Without this, anyone could POST a fake `"SUCCESSFUL"` to their own callback URL and get a free payment plus an automatic real payout, before ever actually paying.
+
+**A payout can be `held`, not just `pending`/`success`/`failed`.** If the landlord's account is deactivated (an admin locked it — see §10's provisioning checklist and the Admin API's `PATCH /admin/users/:id/status`) at the moment their tenant's payment succeeds, `initiateDisbursement` deliberately withholds the payout instead of sending it, and notifies every admin. The point is that an admin lock should have teeth over money movement, not just app access — a deactivated landlord shouldn't keep automatically receiving rent. The held payout auto-releases (via `releaseHeldPayouts`) the instant the account is reactivated, with no separate manual "release funds" step.
 
 **The compliance flag**: MTN has no tenant-to-landlord routing — money cannot move directly between their MoMo accounts. It **must** land in HomeLink's own MTN merchant account first, then get forwarded out. That's true even though the forwarding is instant and fully automated with no human touching it. Rwanda's regulatory treatment of a platform that (even momentarily, even automatically) holds client funds before forwarding them commonly triggers payment-service-provider (PSP) licensing requirements with the National Bank of Rwanda — a different regime than the NCSA data-protection registration in §8. Before this handles real tenant money:
 

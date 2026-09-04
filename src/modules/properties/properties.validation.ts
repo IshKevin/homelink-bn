@@ -134,6 +134,7 @@ export const updateUnitSchema = {
 export const listPropertiesSchema = {
     query: z.object({
         status: z.enum(["available", "occupied"]).optional(),
+        approvalStatus: z.enum(["pending", "approved", "rejected"]).optional(),
         type: z.enum(propertyTypeValues).optional(),
         category: z.enum(propertyCategoryValues).optional(),
         city: shortText().optional(),

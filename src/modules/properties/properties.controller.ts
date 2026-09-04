@@ -18,6 +18,7 @@ export async function listPropertiesHandler(req: Request, res: Response) {
     const { page, limit, offset } = getPagination(req);
     const query = req.query as {
         status?: "available" | "occupied";
+        approvalStatus?: "pending" | "approved" | "rejected";
         type?: "apartment" | "house" | "studio" | "condo" | "commercial" | "other";
         category?: "residential" | "commercial";
         city?: string;
@@ -30,6 +31,7 @@ export async function listPropertiesHandler(req: Request, res: Response) {
         req.user!,
         {
             status: query.status,
+            approvalStatus: query.approvalStatus,
             type: query.type,
             category: query.category,
             city: query.city,

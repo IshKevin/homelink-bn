@@ -75,6 +75,40 @@ describe("Admin module", () => {
         });
     });
 
+    describe("PATCH /api/v1/admin/users/:id/role", () => {
+        it("changes a user's role among the assignable set", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: target } = await createUser({ role: "tenant" });
+
+            const res = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ role: "owner" });
+            expect(res.status).toBe(200);
+            expect(res.body.data.role).toBe("owner");
+
+            const [updated] = await db.select().from(users).where(eq(users.id, target.id)).limit(1);
+            expect(updated?.role).toBe("owner");
+        });
+
+        it("rejects superadmin and house_manager as not assignable through this endpoint", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: target } = await createUser({ role: "tenant" });
+
+            const superadminRes = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ role: "superadmin" });
+            expect(superadminRes.status).toBe(400);
+
+            const managerRes = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ role: "house_manager" });
+            expect(managerRes.status).toBe(400);
+        });
+    });
+
     describe("PATCH /api/v1/admin/users/:id/approve-agent", () => {
         it("approves a pending agent; rejects already-approved and non-agent users", async () => {
             const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });

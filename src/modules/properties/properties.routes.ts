@@ -105,6 +105,10 @@ router.use(authenticate);
  *         name: status
  *         schema: { type: string, enum: [available, occupied] }
  *       - in: query
+ *         name: approvalStatus
+ *         description: Admin-only in practice — other roles are already scoped to their own/approved properties.
+ *         schema: { type: string, enum: [pending, approved, rejected] }
+ *       - in: query
  *         name: type
  *         schema: { type: string, enum: [apartment, house, studio, condo, commercial, other] }
  *       - in: query

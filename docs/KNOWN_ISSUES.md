@@ -1,0 +1,50 @@
+# Known Issues & Deferred Items
+
+Things a production-readiness QA pass surfaced that were **not** fixed — either because they need a business/legal decision, third-party account access, or a scope of work bigger than a QA pass should take unilaterally. Grouped by what kind of action would close them. Last updated 2026-09-04.
+
+---
+
+## Needs a business or legal decision — not something to fix in code
+
+1. **PSP/regulatory licensing for automated landlord disbursement.** MTN's API has no tenant-to-landlord routing — rent money technically lands in HomeLink's own MTN merchant account for a moment before being forwarded to the landlord, even though that forwarding is instant, automatic, and no human ever touches it. Rwanda's regulatory treatment of a platform that (even momentarily, even automatically) holds client funds before forwarding them commonly triggers National Bank of Rwanda payment-service-provider licensing requirements. See [INFRASTRUCTURE.md §9](INFRASTRUCTURE.md) for the full flag. **Action needed:** a Rwanda-licensed fintech/payments lawyer needs to confirm whether this requires PSP licensing, an exemption, or a different corporate structure, before real money flows through it.
+2. **Real MTN MoMo credentials not configured.** Everything currently runs against MTN's sandbox or a deterministic mock (`isMtnMomoConfigured()` falls back automatically when credentials are unset). The code path is built and tested end-to-end, but nobody has actually fired a request at MTN's real API. **Action needed:** get Collections + Disbursements subscription keys/API users/API keys from MTN's developer portal (or a business partnership if a marketplace/aggregator arrangement makes more sense — see item 1), then set the `mtn_momo_*` Terraform variables.
+3. **SES stuck in sandbox — production access request was denied.** Every real (non-demo) user currently needs to be manually verified in SES before receiving any email at all (OTP, password reset, receipts). This blocks onboarding real users, not just a nice-to-have. **Action needed:** either pursue AWS Support again with a stronger business justification, or switch to a transactional email provider that doesn't require per-recipient sandbox verification.
+4. **NCSA Data Controller registration not filed**, and **no DPO formally designated.** Required before handling real Rwandan tenant data under Law No. 058/2021 — see [INFRASTRUCTURE.md §8](INFRASTRUCTURE.md). Free, ~30 working days, but someone needs to actually file it.
+5. **No platform commission on rent payments.** The full tenant payment amount is disbursed to the landlord — HomeLink currently earns nothing per-transaction. Not a bug, just an unmade business-model decision; if a commission is wanted, it'd be a small addition to `payouts.service.ts`'s `disburseFunds`.
+6. **Should other owners/agents be able to see a competitor's *pending* (unapproved) property listing?** `getPropertyById` only restricts *tenants* to approved+active listings — any owner/agent/house_manager can currently view another owner's still-pending or rejected draft in full. Might be intentional ("browse the whole marketplace"), might be an oversight leaking draft listings to competitors. Flagged, not changed, pending a product decision.
+
+---
+
+## Frontend/backend contract gaps — found, not fixed (out of scope for a backend-focused pass, or not yet live)
+
+These were found auditing `homelinkRwa` (the frontend repo) against this backend. Two clear breaks were already fixed directly (`updateProperty` was calling `PUT` where the backend only has `PATCH`; the backend was missing `PATCH /admin/users/:id/role` entirely, now added). The rest are real but lower-priority:
+
+7. **Lease move-out request flow is wired incorrectly on the frontend, but not currently reachable from any real screen** (confirmed via grep — no page calls `createMoveRequest`/`updateMoveRequestChecklist`/`inspectMoveRequest` today), so nothing is actually broken for a real user yet. Whoever wires up move-out UI next needs to fix, in `homelinkRwa/src/lib/api/leases.ts`:
+   - `createMoveRequest` doesn't send the backend-required `type: "move_out"` literal.
+   - `updateMoveRequestChecklist` sends `{ items: [{description, checked}] }`; the backend (`updateChecklistSchema`) expects `{ checklist: [{label, done}] }` — both field names and shape are wrong.
+   - `inspectMoveRequest` sends `{ moveRequestId, inspectionDate, notes }`; the backend expects `inspectionNotes` (min 3 chars), which isn't sent at all.
+8. **The backend has a full notifications API** (`GET /notifications`, `GET /notifications/unread-count`, `PATCH /notifications/:id/read`, `PATCH /notifications/read-all`) **that the frontend never calls.** The notification bell in every role's Topbar component is a static icon, not wired to real data. A real, working backend feature currently has no UI.
+9. **The frontend's API base URL is a hardcoded IP** (`homelinkRwa/Jenkinsfile`'s `NEXT_PUBLIC_API_BASE_URL`), while the backend's CORS allowlist is generated dynamically by Terraform from the app box's current Elastic IP (`CORS_ALLOWED_ORIGINS` / `local.app_public_hostname`). Nothing keeps these in sync — a `terraform apply` that changes the app box's IP would silently break both CORS and the frontend's hardcoded backend URL, with no single source of truth. Worth pointing the frontend Jenkinsfile at the same SSM parameter (`<prefix>/app/app_url`) instead of a literal string.
+10. **The frontend has 55 pre-existing ESLint errors** (mostly `react-hooks/set-state-in-effect`) and **3 remaining high-severity npm vulnerabilities** requiring a Next.js 15→16 major version bump (`next`, bundled `postcss`, `sharp`) — a real breaking upgrade that needs dedicated testing time, not something to force through as part of a backend QA pass. One non-breaking fix (`nanoid`) was already applied.
+
+---
+
+## Documentation gaps — partially fixed, broader gap remains
+
+11. **`docs/DATABASE_SCHEMA.md` only documents 6 of the app's actual domains.** The payments/payouts content was brought fully up to date in this pass (added the `payouts` table, `payout_status`'s `held` value, `payment_approval_status`, `users.payoutMomoNumber`, fixed the `user_role` and `payment_method` enum listings). Still entirely undocumented: the IAM/invite tables (`manager_assignments`, `invites`, `suspension_requests`), `lease_documents`, and `login_challenges` (new-device OTP sessions) — none of these predate this session's changes, they were just never added to this doc. Needs a proper pass to bring the doc to the real current table count.
+12. **`docs/INFRASTRUCTURE.md` §6 doesn't describe the Prometheus/Grafana/Alertmanager monitoring stack** running on the Jenkins box in any detail (dashboards, scrape targets, alert rules) — only the newer CloudWatch/DLQ alarm addition is documented. Read `infra/terraform/user-data/jenkins.sh.tpl` directly until this gets written up.
+
+---
+
+## Infrastructure loose ends
+
+13. **`aws_instance.jenkins`'s `user_data` attribute is out of sync with what Terraform would render** (a side effect of removing `alert_email`, which also feeds Jenkins' Alertmanager config). Harmless as-is — AWS won't re-run user-data on a running instance regardless — but if you want Terraform's state to stop showing this drift, run `terraform apply -target=aws_instance.jenkins` yourself. Blocked from being applied by this session's own safety controls (direct EC2 instance modification), not a real risk.
+14. **The stuck `PendingConfirmation` SNS subscription for the old alert email will auto-expire within 3 days of AWS's own accord** — no action needed, AWS deletes unconfirmed subscriptions on that schedule. If you want a new email/Slack webhook receiving alerts, that's a fresh, separate setup.
+15. **A full backup-restore drill was deliberately skipped** (by explicit choice, not an oversight) — nightly EBS snapshots are confirmed completing successfully on all three boxes, but nobody has actually restored one to prove the restore path works end-to-end. Worth doing once there's dedicated time/budget for the temporary resources it requires.
+16. **5 of homelink-bn's own npm vulnerabilities remain** (down from 7) — the 2 fixable without a major bump (`js-yaml`, `qs`) were already applied. The rest (`@faker-js/faker`, `drizzle-kit`'s bundled `esbuild`, `exceljs`'s `uuid`) are dev-only or lower-severity and need a deliberate, tested major-version upgrade rather than a blind `--force`.
+
+---
+
+## Housekeeping
+
+17. **`TestDoc.md`** (repo root) has had an uncommitted local diff sitting since before this round of work started, and its content itself is stale — it references a Render deployment (`homelink-bn.onrender.com`) and hardcoded MinIO credentials that don't reflect the current AWS setup. Left alone pending a decision on whether to update it, fold it into the real docs, or delete it outright.

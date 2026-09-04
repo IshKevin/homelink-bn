@@ -72,6 +72,7 @@ export interface UpdateUnitInput {
 
 export interface ListPropertiesFilters {
     status?: PropertyRow["status"] | undefined;
+    approvalStatus?: PropertyRow["approvalStatus"] | undefined;
     type?: PropertyRow["type"] | undefined;
     category?: PropertyRow["category"] | undefined;
     city?: string | undefined;
@@ -199,6 +200,7 @@ export async function listProperties(
     const conditions = [];
 
     if (filters.status) conditions.push(eq(properties.status, filters.status));
+    if (filters.approvalStatus) conditions.push(eq(properties.approvalStatus, filters.approvalStatus));
     if (filters.type) conditions.push(eq(properties.type, filters.type));
     if (filters.category) conditions.push(eq(properties.category, filters.category));
     if (filters.city) conditions.push(ilike(properties.city, `%${filters.city}%`));

@@ -2,7 +2,9 @@
 
 A reference for the tables, fields, and relationships behind HomeLink, the property-management platform connecting owners, agents, tenants, and admins across listing, leasing, payments, and maintenance.
 
-**Engine:** PostgreSQL · **Tables:** 16 · **Domains:** 6 · **Prepared:** 2026-07-12
+**Engine:** PostgreSQL · **Domains:** 6 · **Last updated:** 2026-09-04
+
+> This doc covers the six domains below in full, but the database has grown a few more tables since it was last fully rewritten (IAM/invite tables, lease documents, login-challenge sessions) that aren't yet documented here — see [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for the exact list. Only `payments`/`payouts`-related content was brought up to date in this pass, since that's what changed most recently.
 
 ---
 
@@ -15,7 +17,7 @@ Every table belongs to one of six domains. Data flows roughly in this order: a p
 | Identity & Access | Accounts, roles, verification, login sessions | `users`, `identity_verifications`, `refresh_tokens`, `password_reset_tokens` |
 | Property Management | Listings owners and agents publish for rent | `properties`, `property_images`, `property_units` |
 | Leasing | Agreements, renewals/terminations, move in/out | `leases`, `lease_change_requests`, `move_requests` |
-| Payments & Billing | Rent invoices and the payments settling them | `invoices`, `payments`, `document_sequences` |
+| Payments & Billing | Rent invoices, the payments settling them, and automated landlord disbursement | `invoices`, `payments`, `payouts`, `document_sequences` |
 | Maintenance | Tenant repair requests and post-fix feedback | `maintenance_requests`, `maintenance_feedback` |
 | Platform | Cross-cutting notifications, audit trail, config, public leads | `notifications`, `audit_logs`, `platform_settings`, `leads` |
 
@@ -75,6 +77,7 @@ Every person on the platform — tenant, owner, agent, or admin — in one table
 | first_name / last_name | varchar(100) | Required |
 | phone | varchar(30) | Optional |
 | avatar_url | text | Optional |
+| payout_momo_number | varchar(30) | Optional — the landlord's own MTN MoMo number, where automated rent disbursements land. Distinct from `leases.momo_number` (the tenant's number, used to *collect* rent) |
 | is_verified | boolean | Identity document approved |
 | is_approved | boolean | Account cleared to use the platform |
 | is_active | boolean | Soft-disable switch |
@@ -246,12 +249,32 @@ An attempt to settle an invoice — one invoice can have several attempts if ear
 | tenant_id | uuid → users.id | Required |
 | amount | numeric(12,2) | Required |
 | method | enum `payment_method` | Required |
-| provider / provider_reference | varchar(100) | e.g. gateway name + its transaction id |
+| provider / provider_reference | varchar(100) | e.g. gateway name + its transaction id (MTN's requesttopay reference for the real integration) |
 | status | enum `payment_status` | Default `pending` |
+| approval_status | enum `payment_approval_status` | Default `not_required` — cash/bank_transfer payments go through `pending`→`approved`/`rejected` by the landlord; mobile money is always `not_required` (settles automatically) |
+| approved_by | uuid → users.id | Set when a cash/bank_transfer payment is approved |
+| approved_at | timestamptz | Set alongside approved_by |
 | failure_reason | text | Set when status is failed |
 | receipt_url | text | Optional |
 | paid_at | timestamptz | Set on success |
 | created_at | timestamptz | Auto-managed |
+
+### `payouts`
+The automated landlord disbursement triggered by a successful payment — see [../README.md](../README.md)'s Payments section and [INFRASTRUCTURE.md §9](INFRASTRUCTURE.md) for the full EventBridge → SQS → MTN Disbursements flow. **PK:** `id`
+
+| Column | Type | Notes |
+|---|---|---|
+| payment_id | uuid → payments.id | Required · deleted with the payment · one payout per payment (enforced in application logic, not a DB unique constraint) |
+| lease_id | uuid → leases.id | Required · deleted with the lease |
+| owner_id | uuid → users.id | Required — the landlord being paid |
+| amount | numeric(12,2) | Required — currently always the full payment amount, no platform commission deducted |
+| provider / provider_reference | varchar(100) | e.g. `"MTN MoMo"` / `"MTN MoMo (mock)"` + MTN's transfer reference |
+| status | enum `payout_status` | Default `pending` |
+| failure_reason | text | Set when status is `failed` or `held` |
+| disbursed_at | timestamptz | Set on success |
+| created_at / updated_at | timestamptz | Auto-managed |
+
+`held` is a distinct status from `failed`: it means the landlord's account was deactivated when the payout would have gone out, so it was deliberately withheld rather than sent — an admin lock now has teeth over the money, not just app access. It auto-releases (flips to the normal success/failed outcome) the moment an admin reactivates the account, with no separate manual "release funds" step.
 
 ### `document_sequences`
 A per-key running counter used to allocate sequential, human-readable numbers (invoice/payment) that reset every calendar year. **PK:** `key`
@@ -351,7 +374,7 @@ Fixed sets of values enforced by the database, used across the tables above.
 
 | Enum | Values |
 |---|---|
-| user_role | tenant, owner, agent, admin |
+| user_role | tenant, owner, agent, admin, superadmin, house_manager |
 | verification_status | pending, approved, rejected |
 | property_type | apartment, house, studio, condo, commercial, other |
 | property_status | available, occupied |
@@ -362,8 +385,10 @@ Fixed sets of values enforced by the database, used across the tables above.
 | move_type | move_in, move_out |
 | move_status | pending, in_progress, completed |
 | invoice_status | unpaid, paid, overdue |
-| payment_method | mobile_money, bank_transfer |
+| payment_method | mobile_money, bank_transfer, cash |
 | payment_status | pending, success, failed |
+| payment_approval_status | not_required, pending, approved, rejected |
+| payout_status | pending, success, failed, held |
 | maintenance_status | submitted, assigned, in_progress, completed |
 | maintenance_priority | low, medium, high |
 | lead_type | contact, get_started |

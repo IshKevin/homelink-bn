@@ -17,6 +17,12 @@ export const updateUserStatusSchema = {
     })
 };
 
+export const updateUserRoleSchema = {
+    body: z.object({
+        role: z.enum(["tenant", "owner", "agent", "admin"])
+    })
+};
+
 export const listIdentityVerificationsSchema = {
     query: z.object({
         status: z.enum(["pending", "approved", "rejected"]).optional(),

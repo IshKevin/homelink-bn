@@ -12,6 +12,7 @@ import {
     listUsersSchema,
     rejectIdentityVerificationSchema,
     rejectSuspensionRequestSchema,
+    updateUserRoleSchema,
     updateUserStatusSchema,
     upsertSettingSchema
 } from "./admin.validation";
@@ -30,6 +31,7 @@ import {
     reactivatePropertyHandler,
     rejectIdentityVerificationHandler,
     rejectSuspensionRequestHandler,
+    updateUserRoleHandler,
     updateUserStatusHandler,
     upsertSettingHandler
 } from "./admin.controller";
@@ -136,6 +138,43 @@ router.get("/users/:id", getUserHandler);
  *               $ref: '#/components/schemas/ApiError'
  */
 router.patch("/users/:id/status", validate(updateUserStatusSchema), updateUserStatusHandler);
+
+/**
+ * @openapi
+ * /admin/users/{id}/role:
+ *   patch:
+ *     tags: [Admin]
+ *     summary: Change a user's role (admin only)
+ *     description: superadmin and house_manager are not settable here — house_manager assignment goes through the IAM invite flow instead.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [role]
+ *             properties:
+ *               role: { type: string, enum: [tenant, owner, agent, admin] }
+ *     responses:
+ *       200:
+ *         description: User role updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.patch("/users/:id/role", validate(updateUserRoleSchema), updateUserRoleHandler);
 
 /**
  * @openapi

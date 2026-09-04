@@ -67,6 +67,7 @@ A third box runs Jenkins natively (not containerized — `docker build` runs dir
 2. **Manage Jenkins -> Credentials** -> add a "Username with password" credential, ID **`ghcr-token`**: username = your GitHub username, password = a GitHub PAT with `write:packages` (classic) or fine-grained `Packages: write`. This is what both Jenkinsfiles push with.
 3. Create a **Pipeline** job pointed at this repo (branch source pointing at `Jenkinsfile` in the root) — it'll build, push to `ghcr.io/<owner>/<repo>`, and redeploy the app box on every run.
 4. `/etc/homelink/deploy.env` (written by `user-data/jenkins.sh.tpl`) already has `AWS_REGION`/`APP_INSTANCE_ID`/`FRONTEND_INSTANCE_ID` baked in from the Terraform apply that created these boxes — the Jenkinsfiles source it directly, nothing to configure in Jenkins for that part.
+5. **Wire up the GitHub push trigger** so builds fire automatically instead of only on demand: enable "GitHub hook trigger for GITScm polling" on the job, then add a webhook in the GitHub repo's Settings -> Webhooks pointed at `terraform output -raw jenkins_github_webhook_payload_url`, content type `application/json`, secret from `terraform output -raw jenkins_github_webhook_secret` — both already provisioned by Terraform (`compute.tf`'s `random_password.jenkins_github_webhook_secret`), just not attached to anything until you do this once per job/repo.
 
 **Reaching the Jenkins UI** — closed to the internet by default:
 ```bash

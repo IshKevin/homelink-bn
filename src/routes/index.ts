@@ -13,6 +13,7 @@ import reportsRoutes from "../modules/reports/reports.routes";
 import iamRoutes from "../modules/iam/iam.routes";
 import leadsRoutes from "../modules/leads/leads.routes";
 import webhooksRoutes from "../modules/payments/webhooks.routes";
+import sesWebhooksRoutes from "../modules/webhooks/ses.webhooks.routes";
 
 const router = Router();
 
@@ -49,5 +50,6 @@ router.use("/reports", reportsRoutes);
 router.use("/iam", iamRoutes);
 router.use("/leads", leadsRoutes);
 router.use("/webhooks", webhooksRoutes);
+router.use("/webhooks/ses", sesWebhooksRoutes);
 
 export default router;

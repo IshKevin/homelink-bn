@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import { env } from "../config/env";
 import { logger } from "../config/logger";
+import { isEmailSuppressed } from "./emailSuppression.service";
 
 const transporter = nodemailer.createTransport({
     host: env.smtp.host,
@@ -17,6 +18,10 @@ export interface SendMailInput {
 
 export async function sendMail(input: SendMailInput): Promise<void> {
     if (env.nodeEnv === "test") {
+        return;
+    }
+    if (await isEmailSuppressed(input.to)) {
+        logger.warn({ to: input.to }, "Skipped sending — address is suppressed (prior bounce/complaint)");
         return;
     }
     try {

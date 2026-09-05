@@ -1,7 +1,8 @@
 import client from "prom-client";
-import { sql } from "drizzle-orm";
+import { and, gt, isNull, sql } from "drizzle-orm";
 import { db } from "../database";
-import { invoices, leases, properties, propertyUnits, users } from "../database/schema";
+import { invoices, leases, properties, propertyUnits, refreshTokens, users } from "../database/schema";
+import { parseDeviceLabels } from "../common/utils/userAgent.util";
 
 // Scraped by Prometheus on the Jenkins box over this app box's PRIVATE IP
 // (see infra/terraform/user-data/jenkins.sh.tpl's `app-api` job) — never
@@ -52,6 +53,16 @@ export const leasesCreatedTotal = new client.Counter({
     name: "homelink_leases_created_total",
     help: "Leases created, by whether a brand-new tenant account was registered alongside it",
     labelNames: ["new_tenant"], // "true" | "false"
+    registers: [metricsRegistry]
+});
+
+// "Who's using the system and what are they doing" — without ever putting
+// a raw IP address, user-agent string, or individual user's identity in
+// Grafana. Both are aggregate counts only.
+export const auditActionsTotal = new client.Counter({
+    name: "homelink_audit_actions_total",
+    help: "Every recorded action, by type (see services/audit.service.ts)",
+    labelNames: ["action"],
     registers: [metricsRegistry]
 });
 
@@ -125,6 +136,41 @@ void new client.Gauge({
             .from(invoices)
             .groupBy(invoices.status);
         for (const row of rows) this.set({ status: row.status }, row.count);
+    },
+    registers: [metricsRegistry]
+});
+
+// Currently-live sessions (not revoked, not expired), grouped by parsed
+// device/browser/OS — "what devices are using the system right now"
+// without ever exposing a raw user-agent string or which specific user it
+// belongs to. Grouping happens in JS since the device labels are derived
+// from parsing the stored user-agent, not a column Postgres can GROUP BY.
+void new client.Gauge({
+    name: "homelink_active_sessions_total",
+    help: "Currently active sessions (unexpired, unrevoked refresh tokens), by device type/browser/OS",
+    labelNames: ["device_type", "browser", "os"],
+    async collect() {
+        const rows = await db
+            .select({ userAgent: refreshTokens.userAgent })
+            .from(refreshTokens)
+            .where(and(isNull(refreshTokens.revokedAt), gt(refreshTokens.expiresAt, new Date())));
+
+        const counts = new Map<string, { labels: { device_type: string; browser: string; os: string }; count: number }>();
+        for (const row of rows) {
+            const { deviceType, browser, os } = parseDeviceLabels(row.userAgent);
+            const key = JSON.stringify([deviceType, browser, os]);
+            const existing = counts.get(key);
+            if (existing) {
+                existing.count++;
+            } else {
+                counts.set(key, { labels: { device_type: deviceType, browser, os }, count: 1 });
+            }
+        }
+
+        this.reset();
+        for (const { labels, count } of counts.values()) {
+            this.set(labels, count);
+        }
     },
     registers: [metricsRegistry]
 });

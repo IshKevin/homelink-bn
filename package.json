@@ -52,6 +52,7 @@
     "sns-validator": "^0.3.5",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
+    "ua-parser-js": "^2.0.10",
     "uuid": "^14.0.1",
     "zod": "^4.4.3"
   },

@@ -1,5 +1,6 @@
 import { db } from "../database";
 import { auditLogs } from "../database/schema";
+import { auditActionsTotal } from "../config/metrics";
 
 export interface RecordActionInput {
     userId?: string | undefined;
@@ -17,4 +18,5 @@ export async function recordAction(input: RecordActionInput): Promise<void> {
         entityId: input.entityId,
         metadata: input.metadata
     });
+    auditActionsTotal.inc({ action: input.action });
 }

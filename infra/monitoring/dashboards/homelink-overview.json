@@ -140,6 +140,39 @@
       "targets": [
         { "expr": "homelink_invoices_total", "legendFormat": "{{status}}", "datasource": { "type": "prometheus", "uid": "prometheus" } }
       ]
+    },
+    {
+      "id": 13,
+      "type": "piechart",
+      "title": "Active Sessions by Device Type",
+      "description": "Currently logged-in sessions (unexpired, unrevoked), by device type — desktop, mobile, tablet, etc. No individual user or raw device info is exposed, only aggregate counts.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (device_type) (homelink_active_sessions_total)", "legendFormat": "{{device_type}}", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "piechart",
+      "title": "Active Sessions by Browser / OS",
+      "description": "Same active sessions, broken down by browser and operating system instead.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (browser, os) (homelink_active_sessions_total)", "legendFormat": "{{browser}} / {{os}}", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "bargauge",
+      "title": "What People Are Doing (Actions, last 24h)",
+      "description": "Every recorded action across the whole system in the last 24 hours, by type — lease created, payment initiated, user registered, etc.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 56 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (action) (increase(homelink_audit_actions_total[24h]))", "legendFormat": "{{action}}", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ]
     }
   ]
 }

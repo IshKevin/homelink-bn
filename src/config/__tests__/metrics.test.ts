@@ -20,5 +20,7 @@ describe("GET /metrics", () => {
         expect(res.text).toContain("homelink_units_total");
         expect(res.text).toContain("homelink_leases_total");
         expect(res.text).toContain("homelink_invoices_total");
+        expect(res.text).toContain("homelink_audit_actions_total");
+        expect(res.text).toContain("homelink_active_sessions_total");
     });
 });

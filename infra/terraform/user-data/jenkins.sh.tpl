@@ -335,9 +335,9 @@ fetch_dashboard() {
       # that prompt entirely, so any variant left unresolved means "No
       # data" on every panel/variable that references it. Match generically
       # instead of hardcoding each spelling as it's discovered.
-      sed -i -E \
-        -e 's/$$\{?[Dd][Ss][_-][A-Za-z0-9_-]*\}?/prometheus/g' \
-        -e 's/$$\{datasource\}/prometheus/g' \
+      sed -i \
+        -e 's/$${\?[Dd][Ss][_-][A-Za-z0-9_-]*}\?/prometheus/g' \
+        -e 's/$${datasource}/prometheus/g' \
         "/opt/monitoring/grafana-provisioning/dashboards/json/$name.json" || true
       # Override the generic community-dashboard title with a clear one.
       jq --arg title "$title" '.title = $title | .id = null' \

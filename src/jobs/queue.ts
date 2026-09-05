@@ -12,5 +12,6 @@ export const JobNames = {
     GENERATE_INVOICES: "generate-invoices",
     FLAG_LATE_PAYMENTS: "flag-late-payments",
     SEND_RENT_REMINDERS: "send-rent-reminders",
-    PROCESS_PAYOUT_EVENTS: "process-payout-events"
+    PROCESS_PAYOUT_EVENTS: "process-payout-events",
+    RECONCILE_PENDING_MTN_TRANSACTIONS: "reconcile-pending-mtn-transactions"
 } as const;

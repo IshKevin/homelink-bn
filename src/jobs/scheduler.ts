@@ -25,5 +25,11 @@ export async function scheduleRepeatableJobs(): Promise<void> {
         {},
         { repeat: { pattern: "* * * * *" }, jobId: JobNames.PROCESS_PAYOUT_EVENTS }
     );
+    // Fallback for a dropped MTN webhook — see reconcilePendingMtnTransactions.job.ts.
+    await rentQueue.add(
+        JobNames.RECONCILE_PENDING_MTN_TRANSACTIONS,
+        {},
+        { repeat: { pattern: "*/5 * * * *" }, jobId: JobNames.RECONCILE_PENDING_MTN_TRANSACTIONS }
+    );
     logger.info("Repeatable rent jobs scheduled");
 }

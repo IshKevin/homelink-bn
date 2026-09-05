@@ -156,6 +156,40 @@ describe("Payments module", () => {
             expect(res.status).toBe(200);
             expect(res.body.data.some((p: { invoiceId: string }) => p.invoiceId === invoice.id)).toBe(true);
         });
+
+        it("supports filtering by unitId, tenantId, and propertyId — for the unit/tenant/property payment history views", async () => {
+            const { ownerToken, tenant, tenantToken, lease, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+            // An unrelated lease/payment on a different unit/property/tenant, to prove each filter actually excludes it.
+            const { tenantToken: otherTenantToken, invoice: otherInvoice } = await setupLeaseWithInvoice({ amountDue: "1000.00" });
+
+            await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "mobile_money" });
+            await testRequest()
+                .post(`/api/v1/invoices/${otherInvoice.id}/pay`)
+                .set("Authorization", `Bearer ${otherTenantToken}`)
+                .send({ method: "mobile_money" });
+
+            const byUnit = await testRequest()
+                .get(`/api/v1/payments?unitId=${lease.unitId}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(byUnit.status).toBe(200);
+            expect(byUnit.body.data.length).toBeGreaterThan(0);
+            expect(byUnit.body.data.every((p: { invoiceId: string }) => p.invoiceId === invoice.id)).toBe(true);
+
+            const byTenant = await testRequest()
+                .get(`/api/v1/payments?tenantId=${tenant.id}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(byTenant.status).toBe(200);
+            expect(byTenant.body.data.every((p: { tenantId: string }) => p.tenantId === tenant.id)).toBe(true);
+
+            const byProperty = await testRequest()
+                .get(`/api/v1/payments?propertyId=${lease.propertyId}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(byProperty.status).toBe(200);
+            expect(byProperty.body.data.every((p: { invoiceId: string }) => p.invoiceId === invoice.id)).toBe(true);
+        });
     });
 
     describe("GET /api/v1/payments/export", () => {

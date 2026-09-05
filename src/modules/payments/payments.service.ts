@@ -29,6 +29,9 @@ export interface ListInvoicesFilters {
 export interface ListPaymentsFilters {
     status?: PaymentRow["status"] | undefined;
     invoiceId?: string | undefined;
+    unitId?: string | undefined;
+    tenantId?: string | undefined;
+    propertyId?: string | undefined;
 }
 
 export interface PayInvoiceInput {
@@ -416,6 +419,9 @@ export async function listPayments(
     const conditions = [];
     if (filters.status) conditions.push(eq(payments.status, filters.status));
     if (filters.invoiceId) conditions.push(eq(payments.invoiceId, filters.invoiceId));
+    if (filters.unitId) conditions.push(eq(leases.unitId, filters.unitId));
+    if (filters.tenantId) conditions.push(eq(payments.tenantId, filters.tenantId));
+    if (filters.propertyId) conditions.push(eq(leases.propertyId, filters.propertyId));
 
     if (requester.role === "tenant") {
         conditions.push(eq(payments.tenantId, requester.id));
@@ -451,6 +457,9 @@ export async function exportPayments(requester: Requester, filters: ListPayments
     const conditions = [];
     if (filters.status) conditions.push(eq(payments.status, filters.status));
     if (filters.invoiceId) conditions.push(eq(payments.invoiceId, filters.invoiceId));
+    if (filters.unitId) conditions.push(eq(leases.unitId, filters.unitId));
+    if (filters.tenantId) conditions.push(eq(payments.tenantId, filters.tenantId));
+    if (filters.propertyId) conditions.push(eq(leases.propertyId, filters.propertyId));
 
     if (requester.role === "tenant") {
         conditions.push(eq(payments.tenantId, requester.id));

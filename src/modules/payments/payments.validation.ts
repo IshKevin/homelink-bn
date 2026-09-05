@@ -32,6 +32,9 @@ export const listPaymentsSchema = {
     query: z.object({
         status: z.enum(["pending", "success", "failed"]).optional(),
         invoiceId: z.string().uuid().optional(),
+        unitId: z.string().uuid().optional(),
+        tenantId: z.string().uuid().optional(),
+        propertyId: z.string().uuid().optional(),
         page: z.coerce.number().int().positive().optional(),
         limit: z.coerce.number().int().positive().optional()
     })

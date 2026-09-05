@@ -152,6 +152,18 @@ invoicesRouter.post("/:id/pay", authorize("tenant"), validate(payInvoiceSchema),
  *         name: invoiceId
  *         schema: { type: string, format: uuid }
  *       - in: query
+ *         name: unitId
+ *         description: This unit's payment history — reuses this same endpoint rather than a separate one
+ *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: tenantId
+ *         description: A specific tenant's payment history (owner/admin only — a tenant's own results are already scoped to themselves regardless of this param)
+ *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: propertyId
+ *         description: A property's payment summary across all its units
+ *         schema: { type: string, format: uuid }
+ *       - in: query
  *         name: page
  *         schema: { type: integer }
  *       - in: query

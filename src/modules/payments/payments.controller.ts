@@ -35,11 +35,14 @@ export async function listPaymentsHandler(req: Request, res: Response) {
     const query = req.query as {
         status?: "pending" | "success" | "failed";
         invoiceId?: string;
+        unitId?: string;
+        tenantId?: string;
+        propertyId?: string;
     };
 
     const { rows, total } = await paymentsService.listPayments(
         req.user!,
-        { status: query.status, invoiceId: query.invoiceId },
+        { status: query.status, invoiceId: query.invoiceId, unitId: query.unitId, tenantId: query.tenantId, propertyId: query.propertyId },
         { limit, offset }
     );
 
@@ -50,11 +53,17 @@ export async function exportPaymentsHandler(req: Request, res: Response) {
     const query = req.query as {
         status?: "pending" | "success" | "failed";
         invoiceId?: string;
+        unitId?: string;
+        tenantId?: string;
+        propertyId?: string;
     };
 
     const buffer = await paymentsService.exportPayments(req.user!, {
         status: query.status,
-        invoiceId: query.invoiceId
+        invoiceId: query.invoiceId,
+        unitId: query.unitId,
+        tenantId: query.tenantId,
+        propertyId: query.propertyId
     });
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");

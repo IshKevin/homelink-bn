@@ -1,8 +1,10 @@
-import { and, desc, eq, gte, ilike, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../../database";
 import { properties, propertyImages, propertyUnits, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
+import { readExcelRows } from "../../services/excel.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
@@ -58,6 +60,7 @@ export interface UpdatePropertyInput {
 
 export interface CreateUnitInput {
     label: string;
+    floor?: number;
     bedrooms?: number;
     bathrooms?: number;
     rentAmount: number;
@@ -65,9 +68,24 @@ export interface CreateUnitInput {
 
 export interface UpdateUnitInput {
     label?: string;
+    floor?: number;
     bedrooms?: number;
     bathrooms?: number;
     rentAmount?: number;
+}
+
+export interface GenerateUnitsInput {
+    count: number;
+    floors?: number;
+    bedrooms?: number;
+    bathrooms?: number;
+    rentAmount: number;
+}
+
+export interface ListAvailableUnitsFilters {
+    search?: string | undefined;
+    status?: PropertyUnitRow["status"] | undefined;
+    propertyId?: string | undefined;
 }
 
 export interface ListPropertiesFilters {
@@ -281,6 +299,7 @@ export async function createUnit(propertyId: string, requester: Requester, input
         .values({
             propertyId,
             label: input.label,
+            floor: input.floor,
             bedrooms: input.bedrooms !== undefined ? String(input.bedrooms) : undefined,
             bathrooms: input.bathrooms !== undefined ? String(input.bathrooms) : undefined,
             rentAmount: String(input.rentAmount),
@@ -329,6 +348,169 @@ export async function updateUnit(propertyId: string, unitId: string, requester: 
     await recordAction({ userId: requester.id, action: "property.unit.update", entity: "property", entityId: propertyId, metadata: { unitId } });
 
     return updated;
+}
+
+/**
+ * Bulk-creates units with a shared default price/bedrooms/bathrooms — for
+ * buildings where entering each unit by hand isn't practical. The owner
+ * edits individual unit prices afterward via the existing updateUnit above;
+ * this deliberately doesn't take a per-unit price list (see
+ * importUnitsFromExcel for that).
+ */
+export async function generateUnits(propertyId: string, requester: Requester, input: GenerateUnitsInput) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+    await assertPropertyWriteAccess(propertyRow, requester);
+
+    const bedrooms = input.bedrooms !== undefined ? String(input.bedrooms) : undefined;
+    const bathrooms = input.bathrooms !== undefined ? String(input.bathrooms) : undefined;
+    const rentAmount = String(input.rentAmount);
+
+    const values: (typeof propertyUnits.$inferInsert)[] = [];
+    if (input.floors) {
+        const unitsPerFloor = Math.ceil(input.count / input.floors);
+        let remaining = input.count;
+        for (let floor = 1; floor <= input.floors && remaining > 0; floor++) {
+            const onThisFloor = Math.min(unitsPerFloor, remaining);
+            for (let unit = 1; unit <= onThisFloor; unit++) {
+                values.push({ propertyId, label: `Floor ${floor} - Unit ${unit}`, floor, bedrooms, bathrooms, rentAmount, status: "available" });
+            }
+            remaining -= onThisFloor;
+        }
+    } else {
+        for (let unit = 1; unit <= input.count; unit++) {
+            values.push({ propertyId, label: `Unit ${unit}`, bedrooms, bathrooms, rentAmount, status: "available" });
+        }
+    }
+
+    const created = await db.insert(propertyUnits).values(values).returning();
+
+    await recordAction({
+        userId: requester.id,
+        action: "property.units.generate",
+        entity: "property",
+        entityId: propertyId,
+        metadata: { count: created.length }
+    });
+
+    return created;
+}
+
+const importUnitRowSchema = z.object({
+    label: z.union([z.string(), z.number()]).transform(String).pipe(z.string().min(1).max(100)),
+    floor: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int()).optional(),
+    bedrooms: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int().nonnegative()).optional(),
+    bathrooms: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int().nonnegative()).optional(),
+    rentAmount: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().positive())
+});
+
+/**
+ * Imports one unit per data row from an uploaded .xlsx file — header row
+ * (case-insensitive): label, floor, bedrooms, bathrooms, rentAmount. Unlike
+ * generateUnits, each row carries its own price, matching a landlord's real
+ * rent roll rather than a single shared default. All-or-nothing: if any row
+ * fails validation, nothing is inserted.
+ */
+export async function importUnitsFromExcel(propertyId: string, requester: Requester, fileBuffer: Buffer) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+    await assertPropertyWriteAccess(propertyRow, requester);
+
+    const rawRows = await readExcelRows(fileBuffer);
+    if (rawRows.length === 0) {
+        throw AppError.badRequest("The uploaded file has no data rows");
+    }
+
+    const values: (typeof propertyUnits.$inferInsert)[] = [];
+    const errors: { row: number; message: string }[] = [];
+
+    rawRows.forEach((raw, index) => {
+        const rowNumber = index + 2; // row 1 is the header
+        const result = importUnitRowSchema.safeParse({
+            label: raw["label"],
+            floor: raw["floor"],
+            bedrooms: raw["bedrooms"],
+            bathrooms: raw["bathrooms"],
+            rentAmount: raw["rentamount"] ?? raw["rent amount"] ?? raw["rent"]
+        });
+
+        if (!result.success) {
+            errors.push({ row: rowNumber, message: result.error.issues.map((issue) => issue.message).join("; ") });
+            return;
+        }
+
+        values.push({
+            propertyId,
+            label: result.data.label,
+            floor: result.data.floor,
+            bedrooms: result.data.bedrooms !== undefined ? String(result.data.bedrooms) : undefined,
+            bathrooms: result.data.bathrooms !== undefined ? String(result.data.bathrooms) : undefined,
+            rentAmount: String(result.data.rentAmount),
+            status: "available"
+        });
+    });
+
+    if (errors.length > 0) {
+        throw AppError.badRequest("Some rows in the file are invalid — nothing was imported", errors);
+    }
+
+    const created = await db.transaction(async (tx) => tx.insert(propertyUnits).values(values).returning());
+
+    await recordAction({
+        userId: requester.id,
+        action: "property.units.import",
+        entity: "property",
+        entityId: propertyId,
+        metadata: { count: created.length }
+    });
+
+    return created;
+}
+
+/**
+ * Cross-property unit search, scoped like listProperties — for a unit
+ * picker (e.g. assigning a new tenant to a unit) rather than browsing one
+ * property's units. Registered at GET /properties/units, before GET /:id,
+ * so Express doesn't treat "units" as a property id.
+ */
+export async function listAvailableUnits(requester: Requester, filters: ListAvailableUnitsFilters) {
+    const conditions = [eq(propertyUnits.status, filters.status ?? "available")];
+    if (filters.propertyId) conditions.push(eq(propertyUnits.propertyId, filters.propertyId));
+    if (filters.search) {
+        const term = `%${filters.search}%`;
+        conditions.push(or(ilike(propertyUnits.label, term), ilike(properties.title, term))!);
+    }
+
+    if (requester.role === "owner") {
+        conditions.push(eq(properties.ownerId, requester.id));
+    } else if (requester.role === "house_manager") {
+        conditions.push(eq(properties.ownerId, await resolveEffectiveOwnerId(requester)));
+    } else if (requester.role === "agent") {
+        conditions.push(eq(properties.agentId, requester.id));
+    } else if (!isAdminRole(requester.role)) {
+        throw AppError.forbidden("You do not have permission to search units");
+    }
+
+    const rows = await db
+        .select({
+            id: propertyUnits.id,
+            propertyId: propertyUnits.propertyId,
+            label: propertyUnits.label,
+            floor: propertyUnits.floor,
+            bedrooms: propertyUnits.bedrooms,
+            bathrooms: propertyUnits.bathrooms,
+            rentAmount: propertyUnits.rentAmount,
+            status: propertyUnits.status,
+            propertyTitle: properties.title,
+            propertyAddressLine: properties.addressLine
+        })
+        .from(propertyUnits)
+        .innerJoin(properties, eq(propertyUnits.propertyId, properties.id))
+        .where(and(...conditions))
+        .orderBy(desc(propertyUnits.createdAt))
+        .limit(100);
+
+    return rows;
 }
 
 export async function addPropertyImages(propertyId: string, requester: Requester, files: Express.Multer.File[]) {

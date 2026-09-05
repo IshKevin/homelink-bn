@@ -7,6 +7,8 @@ import { ADMIN_ROLES } from "../../common/constants/roles";
 import {
     createPropertySchema,
     createUnitSchema,
+    generateUnitsSchema,
+    listAvailableUnitsSchema,
     listPropertiesSchema,
     rejectPropertySchema,
     updatePropertySchema,
@@ -19,8 +21,11 @@ import {
     createUnitHandler,
     deletePropertyDocumentHandler,
     deletePropertyImageHandler,
+    generateUnitsHandler,
     getPropertyDocumentHandler,
     getPropertyHandler,
+    importUnitsHandler,
+    listAvailableUnitsHandler,
     listPropertiesHandler,
     listUnitsHandler,
     rejectPropertyHandler,
@@ -147,6 +152,40 @@ router.post(
     createPropertyHandler
 );
 router.get("/", validate(listPropertiesSchema), listPropertiesHandler);
+
+/**
+ * @openapi
+ * /properties/units:
+ *   get:
+ *     tags: [Properties]
+ *     summary: Search units available for assignment across the caller's own properties (owner/agent/house_manager) or all properties (admin)
+ *     description: Registered before GET /properties/{id} so "units" isn't matched as a property id. Not available to tenants.
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         description: Matches unit label or property title
+ *         schema: { type: string }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [available, occupied] }
+ *       - in: query
+ *         name: propertyId
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Matching units, each with its parent property's title/address embedded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       403:
+ *         description: You do not have permission to search units
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.get("/units", validate(listAvailableUnitsSchema), listAvailableUnitsHandler);
 
 /**
  * @openapi
@@ -344,6 +383,88 @@ router.post(
     createUnitHandler
 );
 router.get("/:id/units", listUnitsHandler);
+
+/**
+ * @openapi
+ * /properties/{id}/units/generate:
+ *   post:
+ *     tags: [Properties]
+ *     summary: Bulk-create units with a shared default price (e.g. for an apartment/commercial building) — owner/agent/house_manager/admin only
+ *     description: Individual unit prices are edited afterward via PATCH /properties/{id}/units/{unitId}. See also /units/import for per-unit pricing at creation time.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [count, rentAmount]
+ *             properties:
+ *               count: { type: integer, minimum: 1, maximum: 500 }
+ *               floors: { type: integer, minimum: 1, maximum: 500, description: "If given, units are distributed evenly and labeled 'Floor N - Unit M'" }
+ *               bedrooms: { type: number }
+ *               bathrooms: { type: number }
+ *               rentAmount: { type: number }
+ *     responses:
+ *       201:
+ *         description: Units created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.post(
+    "/:id/units/generate",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    validate(generateUnitsSchema),
+    generateUnitsHandler
+);
+
+/**
+ * @openapi
+ * /properties/{id}/units/import:
+ *   post:
+ *     tags: [Properties]
+ *     summary: Bulk-create units from an uploaded .xlsx file, one row per unit — owner/agent/house_manager/admin only
+ *     description: Header row (case-insensitive) columns - label, floor, bedrooms, bathrooms, rentAmount. All-or-nothing - if any row is invalid, nothing is imported and the row errors are returned.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [file]
+ *             properties:
+ *               file: { type: string, format: binary }
+ *     responses:
+ *       201:
+ *         description: Units imported
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: The file is missing, empty, or has invalid rows
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.post(
+    "/:id/units/import",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    upload.single("file"),
+    importUnitsHandler
+);
 
 /**
  * @openapi

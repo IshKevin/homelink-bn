@@ -8,19 +8,34 @@ const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-
 const shortText = (max = 255) => z.string().min(1).max(max);
 const longText = (max = 5000) => z.string().min(1).max(max);
 
+const newTenantSchema = z.object({
+    email: z.string().email().max(255),
+    firstName: shortText(100),
+    lastName: shortText(100),
+    phone: z.string().min(5).max(30)
+});
+
 export const createLeaseSchema = {
-    body: z.object({
-        propertyId: z.string().uuid(),
-        unitId: z.string().uuid(),
-        tenantId: z.string().uuid(),
-        startDate: dateStringSchema,
-        endDate: dateStringSchema.optional(),
-        paymentDate: dateStringSchema.optional(),
-        rentAmount: z.number().positive(),
-        deposit: z.number().nonnegative().optional(),
-        momoNumber: z.string().max(30).optional(),
-        leasePeriodNote: longText().optional()
-    })
+    body: z
+        .object({
+            propertyId: z.string().uuid(),
+            unitId: z.string().uuid(),
+            // Exactly one of these — an existing tenant to assign, or a new
+            // tenant's info to register and assign in the same step.
+            tenantId: z.string().uuid().optional(),
+            newTenant: newTenantSchema.optional(),
+            startDate: dateStringSchema,
+            endDate: dateStringSchema.optional(),
+            paymentDate: dateStringSchema.optional(),
+            rentAmount: z.number().positive(),
+            deposit: z.number().nonnegative().optional(),
+            momoNumber: z.string().max(30).optional(),
+            leasePeriodNote: longText().optional()
+        })
+        .refine((data) => Boolean(data.tenantId) !== Boolean(data.newTenant), {
+            message: "Provide exactly one of tenantId or newTenant",
+            path: ["tenantId"]
+        })
 };
 
 export const renewalRequestSchema = {

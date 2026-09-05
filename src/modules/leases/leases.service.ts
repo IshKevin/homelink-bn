@@ -1,11 +1,26 @@
+import { addHours } from "date-fns";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../database";
-import { leaseChangeRequests, leaseDocuments, leases, moveRequests, properties, propertyUnits, users } from "../../database/schema";
+import {
+    leaseChangeRequests,
+    leaseDocuments,
+    leases,
+    moveRequests,
+    passwordResetTokens,
+    properties,
+    propertyUnits,
+    users
+} from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
+import { generateRawToken, hashToken } from "../../common/utils/jwt.util";
+import { hashPassword } from "../../common/utils/password.util";
 import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
 import { renderHtmlToPdf } from "../../services/pdf.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
+import { sendMail } from "../../services/email.service";
+import { setPasswordTemplate } from "../../services/email.templates";
+import { env } from "../../config/env";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 import { recomputePropertyStatus } from "../properties/properties.service";
 
@@ -18,10 +33,21 @@ type ChangeRequestType = "renewal" | "termination";
 type ChangeRequestDecision = "approved" | "rejected";
 type ChecklistItem = { label: string; done: boolean };
 
+export interface NewTenantInput {
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+}
+
 export interface CreateLeaseInput {
     propertyId: string;
     unitId: string;
-    tenantId: string;
+    // Exactly one of these — see createLeaseSchema's refine. newTenant lets a
+    // landlord/house_manager register a tenant and assign them a unit in one
+    // step, instead of requiring the tenant to accept an email invite first.
+    tenantId?: string;
+    newTenant?: NewTenantInput;
     startDate: string;
     endDate?: string;
     paymentDate?: string;
@@ -147,36 +173,90 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
         throw AppError.badRequest("unitId does not belong to this property");
     }
 
-    if (unit.status !== "available") {
-        throw AppError.conflict("Unit is not available");
-    }
+    // Tenant creation + the availability check + the lease insert all happen
+    // in one transaction: a partial failure otherwise could leave an
+    // orphaned tenant account with no lease (if newTenant is used), or let
+    // two concurrent requests both pass a since-changed availability check
+    // for the same unit (this is the first db.transaction() use in this
+    // codebase — the risk of a partial multi-step write is real here in a
+    // way it usually isn't for this app's simpler single-insert operations).
+    let rawPasswordResetToken: string | undefined;
+    const { lease, tenant } = await db.transaction(async (tx) => {
+        const [freshUnit] = await tx.select().from(propertyUnits).where(eq(propertyUnits.id, unit.id)).limit(1);
+        if (!freshUnit || freshUnit.status !== "available") {
+            throw AppError.conflict("Unit is not available");
+        }
 
-    const [tenant] = await db.select().from(users).where(eq(users.id, input.tenantId)).limit(1);
-    if (!tenant || tenant.role !== "tenant") {
-        throw AppError.badRequest("tenantId must reference an existing user with role 'tenant'");
-    }
+        let tenantRow: typeof users.$inferSelect;
+        if (input.newTenant) {
+            const [existing] = await tx.select().from(users).where(eq(users.email, input.newTenant.email)).limit(1);
+            if (existing) {
+                throw AppError.conflict("An account with this email already exists");
+            }
 
-    const [lease] = await db
-        .insert(leases)
-        .values({
-            propertyId: property.id,
-            unitId: unit.id,
-            tenantId: tenant.id,
-            ownerId: property.ownerId,
-            startDate: input.startDate,
-            endDate: input.endDate,
-            paymentDate: input.paymentDate,
-            rentAmount: String(input.rentAmount),
-            deposit: input.deposit !== undefined ? String(input.deposit) : undefined,
-            momoNumber: input.momoNumber,
-            leasePeriodNote: input.leasePeriodNote,
-            status: "pending_signatures"
-        })
-        .returning();
+            const passwordHash = await hashPassword(generateRawToken());
+            const [created] = await tx
+                .insert(users)
+                .values({
+                    email: input.newTenant.email,
+                    passwordHash,
+                    firstName: input.newTenant.firstName,
+                    lastName: input.newTenant.lastName,
+                    phone: input.newTenant.phone,
+                    role: "tenant",
+                    isApproved: true
+                })
+                .returning();
+            if (!created) throw AppError.internal("Failed to create tenant");
+            tenantRow = created;
 
-    if (!lease) throw AppError.internal("Failed to create lease");
+            rawPasswordResetToken = generateRawToken();
+            await tx.insert(passwordResetTokens).values({
+                userId: tenantRow.id,
+                tokenHash: hashToken(rawPasswordResetToken),
+                expiresAt: addHours(new Date(), 24)
+            });
+        } else {
+            const [existingTenant] = await tx.select().from(users).where(eq(users.id, input.tenantId!)).limit(1);
+            if (!existingTenant || existingTenant.role !== "tenant") {
+                throw AppError.badRequest("tenantId must reference an existing user with role 'tenant'");
+            }
+            tenantRow = existingTenant;
+        }
+
+        const [createdLease] = await tx
+            .insert(leases)
+            .values({
+                propertyId: property.id,
+                unitId: unit.id,
+                tenantId: tenantRow.id,
+                ownerId: property.ownerId,
+                startDate: input.startDate,
+                endDate: input.endDate,
+                paymentDate: input.paymentDate,
+                rentAmount: String(input.rentAmount),
+                deposit: input.deposit !== undefined ? String(input.deposit) : undefined,
+                momoNumber: input.momoNumber,
+                leasePeriodNote: input.leasePeriodNote,
+                status: "pending_signatures"
+            })
+            .returning();
+
+        if (!createdLease) throw AppError.internal("Failed to create lease");
+
+        return { lease: createdLease, tenant: tenantRow };
+    });
 
     await recordAction({ userId: creator.id, action: "lease.create", entity: "lease", entityId: lease.id });
+
+    if (rawPasswordResetToken) {
+        const link = `${env.appUrl}/set-password?token=${rawPasswordResetToken}`;
+        await sendMail({
+            to: tenant.email,
+            subject: "Set your HomeLink password",
+            html: setPasswordTemplate(tenant.firstName, link)
+        });
+    }
 
     await notify({
         userId: tenant.id,

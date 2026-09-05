@@ -67,6 +67,7 @@ export const propertyUnits = pgTable("property_units", {
         .notNull()
         .references(() => properties.id, { onDelete: "cascade" }),
     label: varchar("label", { length: 100 }).notNull(),
+    floor: integer("floor"),
     bedrooms: numeric("bedrooms", { precision: 4, scale: 0 }),
     bathrooms: numeric("bathrooms", { precision: 4, scale: 0 }),
     rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),

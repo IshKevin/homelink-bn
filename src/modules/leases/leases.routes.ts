@@ -47,11 +47,21 @@ router.use(authenticate);
  *   schemas:
  *     CreateLeaseInput:
  *       type: object
- *       required: [propertyId, unitId, tenantId, startDate, rentAmount]
+ *       required: [propertyId, unitId, startDate, rentAmount]
+ *       description: Exactly one of tenantId or newTenant must be given.
  *       properties:
  *         propertyId: { type: string, format: uuid }
- *         unitId: { type: string, format: uuid, description: "A specific unit on this property (must be available); see /properties/{id}/units" }
- *         tenantId: { type: string, format: uuid }
+ *         unitId: { type: string, format: uuid, description: "A specific unit on this property (must be available); see /properties/units to search across your portfolio" }
+ *         tenantId: { type: string, format: uuid, description: "An existing tenant's user id" }
+ *         newTenant:
+ *           type: object
+ *           required: [email, firstName, lastName, phone]
+ *           description: Registers a brand-new tenant account and assigns them this unit in one step. They receive a 'set your password' email, same as an admin-created house owner.
+ *           properties:
+ *             email: { type: string, format: email }
+ *             firstName: { type: string }
+ *             lastName: { type: string }
+ *             phone: { type: string }
  *         startDate: { type: string, example: "2026-01-01" }
  *         endDate: { type: string, example: "2026-12-31", description: "Optional — omit for an open-ended lease" }
  *         paymentDate: { type: string, example: "2026-01-05", description: "Optional agreed recurring payment date (day-of-month); drives invoice due dates" }

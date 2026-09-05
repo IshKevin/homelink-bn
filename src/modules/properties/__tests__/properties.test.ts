@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
 import { createAuthedUser, createProperty, createUser } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
-import { properties } from "../../../database/schema";
+import { properties, propertyUnits } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";
 
 jest.mock("../../../services/storage.service", () => ({
@@ -386,6 +386,161 @@ describe("Properties module", () => {
                 .get(`/api/v1/properties/${property.id}/units`)
                 .set("Authorization", `Bearer ${tenantToken}`);
             expect(res.status).toBe(404);
+        });
+    });
+
+    describe("POST /api/v1/properties/:id/units/generate", () => {
+        it("distributes units evenly across floors with a shared default price", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/generate`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ count: 5, floors: 2, rentAmount: 500 });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data).toHaveLength(5);
+            expect(res.body.data.every((u: { rentAmount: string }) => u.rentAmount === "500.00")).toBe(true);
+            expect(res.body.data.filter((u: { floor: number }) => u.floor === 1)).toHaveLength(3);
+            expect(res.body.data.filter((u: { floor: number }) => u.floor === 2)).toHaveLength(2);
+            expect(res.body.data.every((u: { status: string }) => u.status === "available")).toBe(true);
+        });
+
+        it("generates simple sequential labels when no floors are given", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/generate`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ count: 3, rentAmount: 500 });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.map((u: { label: string }) => u.label).sort()).toEqual(["Unit 1", "Unit 2", "Unit 3"]);
+        });
+
+        it("forbids a tenant from generating units", async () => {
+            const { user: owner } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const { accessToken: tenantToken } = await createAuthedUser({ role: "tenant" });
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/generate`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ count: 3, rentAmount: 500 });
+            expect(res.status).toBe(403);
+        });
+    });
+
+    describe("POST /api/v1/properties/:id/units/import", () => {
+        async function buildUnitsWorkbook(rows: (string | number)[][]): Promise<Buffer> {
+            const ExcelJS = (await import("exceljs")).default;
+            const workbook = new ExcelJS.Workbook();
+            const sheet = workbook.addWorksheet("Units");
+            sheet.addRow(["label", "floor", "bedrooms", "bathrooms", "rentAmount"]);
+            rows.forEach((row) => sheet.addRow(row));
+            const buffer = await workbook.xlsx.writeBuffer();
+            return Buffer.from(buffer);
+        }
+
+        it("imports one unit per row with per-row pricing", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const file = await buildUnitsWorkbook([
+                ["Floor 1 - Unit A", 1, 2, 1, 450],
+                ["Floor 1 - Unit B", 1, 1, 1, 380]
+            ]);
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/import`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .attach("file", file, "units.xlsx");
+
+            expect(res.status).toBe(201);
+            expect(res.body.data).toHaveLength(2);
+            const a = res.body.data.find((u: { label: string }) => u.label === "Floor 1 - Unit A");
+            expect(a.rentAmount).toBe("450.00");
+            expect(a.floor).toBe(1);
+        });
+
+        it("imports nothing and reports row errors when any row is invalid", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const file = await buildUnitsWorkbook([
+                ["Valid Unit", 1, 2, 1, 450],
+                ["Bad Unit", 1, 2, 1, -50] // negative rent
+            ]);
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/import`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .attach("file", file, "units.xlsx");
+
+            expect(res.status).toBe(400);
+            expect(res.body.errors).toEqual([expect.objectContaining({ row: 3 })]);
+
+            const listRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            // Only the default unit from property creation — nothing imported.
+            expect(listRes.body.data).toHaveLength(1);
+        });
+
+        it("forbids an agent not assigned to the property from importing units", async () => {
+            const { user: owner } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const { accessToken: agentToken } = await createAuthedUser({ role: "agent" });
+            const file = await buildUnitsWorkbook([["Unit A", 1, 2, 1, 450]]);
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/import`)
+                .set("Authorization", `Bearer ${agentToken}`)
+                .attach("file", file, "units.xlsx");
+            expect(res.status).toBe(403);
+        });
+    });
+
+    describe("GET /api/v1/properties/units", () => {
+        it("searches available units scoped to the requester's own properties", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/generate`)
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ count: 2, rentAmount: 500 });
+
+            const { accessToken: otherOwnerToken } = await createAuthedUser({ role: "owner" });
+
+            const res = await testRequest()
+                .get(`/api/v1/properties/units?search=${encodeURIComponent(property.title)}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(res.status).toBe(200);
+            expect(res.body.data.length).toBeGreaterThanOrEqual(2);
+            expect(res.body.data.every((u: { propertyId: string }) => u.propertyId === property.id)).toBe(true);
+
+            const otherRes = await testRequest()
+                .get(`/api/v1/properties/units?search=${encodeURIComponent(property.title)}`)
+                .set("Authorization", `Bearer ${otherOwnerToken}`);
+            expect(otherRes.body.data).toHaveLength(0);
+        });
+
+        it("excludes occupied units by default", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const [defaultUnit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+            await db.update(propertyUnits).set({ status: "occupied" }).where(eq(propertyUnits.id, defaultUnit!.id));
+
+            const res = await testRequest()
+                .get(`/api/v1/properties/units?propertyId=${property.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(res.body.data).toHaveLength(0);
+        });
+
+        it("forbids a tenant from searching units", async () => {
+            const { accessToken: tenantToken } = await createAuthedUser({ role: "tenant" });
+            const res = await testRequest().get("/api/v1/properties/units").set("Authorization", `Bearer ${tenantToken}`);
+            expect(res.status).toBe(403);
         });
     });
 });

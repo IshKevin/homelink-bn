@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
 import { createAuthedUser, createLease, createProperty } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
-import { properties, propertyUnits } from "../../../database/schema";
+import { properties, propertyUnits, users } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";
 
 jest.mock("../../../services/storage.service", () => ({
@@ -91,6 +91,90 @@ describe("Leases module", () => {
             expect(res.status).toBe(201);
             expect(res.body.data.endDate).toBeNull();
             expect(res.body.data.paymentDate).toBe("2026-01-05");
+        });
+
+        it("registers a brand-new tenant and assigns them the unit in one step", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id)).limit(1);
+
+            const res = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    unitId: unit!.id,
+                    newTenant: {
+                        email: "new-tenant@example.com",
+                        firstName: "New",
+                        lastName: "Tenant",
+                        phone: "0788000111"
+                    },
+                    startDate: "2026-01-01",
+                    rentAmount: 800
+                });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.status).toBe("pending_signatures");
+
+            const [createdTenant] = await db.select().from(users).where(eq(users.email, "new-tenant@example.com")).limit(1);
+            expect(createdTenant).toBeDefined();
+            expect(createdTenant!.role).toBe("tenant");
+            expect(res.body.data.tenantId).toBe(createdTenant!.id);
+
+            const [updatedUnit] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unit!.id)).limit(1);
+            expect(updatedUnit!.status).toBe("available"); // still available until signed, matching existing behavior
+        });
+
+        it("rejects newTenant with an email that already exists, and creates no lease", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: existingTenant } = await createAuthedUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id)).limit(1);
+
+            const res = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    unitId: unit!.id,
+                    newTenant: {
+                        email: existingTenant.email,
+                        firstName: "Dup",
+                        lastName: "Licate",
+                        phone: "0788000222"
+                    },
+                    startDate: "2026-01-01",
+                    rentAmount: 800
+                });
+
+            expect(res.status).toBe(409);
+
+            const [stillAvailable] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unit!.id)).limit(1);
+            expect(stillAvailable!.status).toBe("available");
+        });
+
+        it("rejects a request that provides both tenantId and newTenant, or neither", async () => {
+            const { ownerToken, tenant, property, unit } = await setupOwnerTenantProperty();
+
+            const bothRes = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    unitId: unit.id,
+                    tenantId: tenant.id,
+                    newTenant: { email: "x@example.com", firstName: "X", lastName: "Y", phone: "0788000333" },
+                    startDate: "2026-01-01",
+                    rentAmount: 800
+                });
+            expect(bothRes.status).toBe(400);
+
+            const neitherRes = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ propertyId: property.id, unitId: unit.id, startDate: "2026-01-01", rentAmount: 800 });
+            expect(neitherRes.status).toBe(400);
         });
     });
 

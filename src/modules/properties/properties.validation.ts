@@ -114,6 +114,7 @@ export const updatePropertySchema = {
 export const createUnitSchema = {
     body: z.object({
         label: shortText(),
+        floor: z.number().int().optional(),
         bedrooms: z.number().int().nonnegative().optional(),
         bathrooms: z.number().int().nonnegative().optional(),
         rentAmount: z.number().positive()
@@ -124,11 +125,30 @@ export const updateUnitSchema = {
     body: z
         .object({
             label: shortText().optional(),
+            floor: z.number().int().optional(),
             bedrooms: z.number().int().nonnegative().optional(),
             bathrooms: z.number().int().nonnegative().optional(),
             rentAmount: z.number().positive().optional()
         })
         .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
+};
+
+export const generateUnitsSchema = {
+    body: z.object({
+        count: z.number().int().min(1).max(500),
+        floors: z.number().int().min(1).max(500).optional(),
+        bedrooms: z.number().int().nonnegative().optional(),
+        bathrooms: z.number().int().nonnegative().optional(),
+        rentAmount: z.number().positive()
+    })
+};
+
+export const listAvailableUnitsSchema = {
+    query: z.object({
+        search: shortText().optional(),
+        status: z.enum(["available", "occupied"]).optional(),
+        propertyId: z.string().uuid().optional()
+    })
 };
 
 export const listPropertiesSchema = {

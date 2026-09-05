@@ -84,6 +84,24 @@ export async function updateUnitHandler(req: Request, res: Response) {
     return sendSuccess(res, { message: "Unit updated", data: unit });
 }
 
+export async function generateUnitsHandler(req: Request, res: Response) {
+    const units = await propertiesService.generateUnits(req.params["id"] as string, req.user!, req.body);
+    return sendSuccess(res, { statusCode: 201, message: `${units.length} unit(s) created`, data: units });
+}
+
+export async function importUnitsHandler(req: Request, res: Response) {
+    const file = req.file as Express.Multer.File | undefined;
+    if (!file) throw AppError.badRequest("A file is required");
+    const units = await propertiesService.importUnitsFromExcel(req.params["id"] as string, req.user!, file.buffer);
+    return sendSuccess(res, { statusCode: 201, message: `${units.length} unit(s) imported`, data: units });
+}
+
+export async function listAvailableUnitsHandler(req: Request, res: Response) {
+    const query = req.query as { search?: string; status?: "available" | "occupied"; propertyId?: string };
+    const units = await propertiesService.listAvailableUnits(req.user!, query);
+    return sendSuccess(res, { data: units });
+}
+
 export async function setPropertyDocumentHandler(req: Request, res: Response) {
     const file = req.file as Express.Multer.File | undefined;
     if (!file) throw AppError.badRequest("A document file is required");

@@ -8,3 +8,5 @@ docker/data
 *.log
 
 .claude/
+
+credential.md

@@ -329,12 +329,14 @@ fetch_dashboard() {
     if curl -fsSL "https://grafana.com/api/dashboards/$id/revisions/$rev/download" \
          -o "/opt/monitoring/grafana-provisioning/dashboards/json/$name.json"; then
       # Community dashboards reference their datasource via an input
-      # placeholder meant to be resolved on UI import; file-provisioned
-      # dashboards skip that prompt, so point the common placeholder
-      # spellings directly at the datasource uid set above.
-      sed -i \
-        -e 's/$${DS_PROMETHEUS}/prometheus/g' \
-        -e 's/$${ds_prometheus}/prometheus/g' \
+      # placeholder meant to be resolved on UI import (every author spells
+      # it differently — seen so far: $DS_PROMETHEUS, $${DS_PROMETHEUS},
+      # even $${DS_SIGNCL-PROMETHEUS}); file-provisioned dashboards skip
+      # that prompt entirely, so any variant left unresolved means "No
+      # data" on every panel/variable that references it. Match generically
+      # instead of hardcoding each spelling as it's discovered.
+      sed -i -E \
+        -e 's/$$\{?[Dd][Ss][_-][A-Za-z0-9_-]*\}?/prometheus/g' \
         -e 's/$${datasource}/prometheus/g' \
         "/opt/monitoring/grafana-provisioning/dashboards/json/$name.json" || true
       # Override the generic community-dashboard title with a clear one.

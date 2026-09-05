@@ -143,6 +143,14 @@ scrape_configs:
       - targets: ['${app_private_ip}:9187']
         labels: { node: 'app' }
 
+  # App + business metrics (see src/config/metrics.ts) — SG-gated to this
+  # box, never through Caddy/the public hostname (see infra/Caddyfile).
+  - job_name: app-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['${app_private_ip}:3000']
+        labels: { node: 'app' }
+
   - job_name: app-redis
     static_configs:
       - targets: ['${app_private_ip}:9121']
@@ -314,7 +322,7 @@ EOF
 dnf install -y jq
 
 fetch_dashboard() {
-  local id="$1" name="$2"
+  local id="$1" name="$2" title="$3"
   local rev
   rev=$(curl -fsSL "https://grafana.com/api/dashboards/$id" | jq -r '.revision' 2>/dev/null) || rev=""
   if [ -n "$rev" ] && [ "$rev" != "null" ]; then
@@ -329,6 +337,10 @@ fetch_dashboard() {
         -e 's/$${ds_prometheus}/prometheus/g' \
         -e 's/$${datasource}/prometheus/g' \
         "/opt/monitoring/grafana-provisioning/dashboards/json/$name.json" || true
+      # Override the generic community-dashboard title with a clear one.
+      jq --arg title "$title" '.title = $title | .id = null' \
+        "/opt/monitoring/grafana-provisioning/dashboards/json/$name.json" > "/tmp/$name.json.tmp" \
+        && mv "/tmp/$name.json.tmp" "/opt/monitoring/grafana-provisioning/dashboards/json/$name.json"
     else
       echo "WARNING: failed to download dashboard $id ($name) — continuing without it"
     fi
@@ -337,11 +349,18 @@ fetch_dashboard() {
   fi
 }
 
-fetch_dashboard 1860 node-exporter-full
-fetch_dashboard 14282 cadvisor
-fetch_dashboard 9628 postgresql
-fetch_dashboard 11835 redis
-fetch_dashboard 7587 blackbox-exporter
+fetch_dashboard 1860 node-exporter-full "Server Health (CPU, Memory, Disk, Network)"
+fetch_dashboard 14282 cadvisor "Container Resource Usage (Docker)"
+fetch_dashboard 9628 postgresql "App Database Health (Postgres)"
+fetch_dashboard 11835 redis "App Cache Health (Redis)"
+fetch_dashboard 7587 blackbox-exporter "Public Endpoint Uptime (Frontend, API, Jenkins)"
+
+# App usage + business dashboard (src/config/metrics.ts) — fetched from
+# this repo rather than embedded inline, since user_data has a 16KB cap.
+curl -fsSL https://raw.githubusercontent.com/IshKevin/homelink-bn/main/infra/monitoring/dashboards/homelink-overview.json \
+  -o /opt/monitoring/grafana-provisioning/dashboards/json/homelink-overview.json \
+  || echo "WARNING: failed to fetch homelink-overview.json — continuing without it"
+
 
 # --- The stack itself -----------------------------------------------------
 cat > /opt/monitoring/docker-compose.yml <<'EOF'

@@ -94,6 +94,19 @@ resource "aws_security_group" "app" {
     security_groups = [aws_security_group.jenkins.id]
   }
 
+  # The API's own /metrics (application + business metrics — see
+  # src/config/metrics.ts). Same port the public Caddy vhost proxies, but
+  # this rule only ever lets the Jenkins box reach it directly over the
+  # private IP — Caddy itself 404s /metrics on the public hostname (see
+  # infra/Caddyfile), so the only way in is this security-group-gated path.
+  ingress {
+    description     = "API /metrics (Prometheus, from the Jenkins box only)"
+    from_port       = 3000
+    to_port         = 3000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.jenkins.id]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0

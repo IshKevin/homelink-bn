@@ -14,5 +14,12 @@
 
 {$PUBLIC_HOSTNAME} {
 	encode gzip
+
+	# Prometheus metrics — meant for the jenkins box only, over this box's
+	# private IP (see infra/terraform/user-data/jenkins.sh.tpl's `app-api`
+	# scrape job), never over the public hostname.
+	@metrics path /metrics
+	respond @metrics 404
+
 	reverse_proxy api:3000
 }

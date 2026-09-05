@@ -14,6 +14,8 @@ import { getApiServers, getEmailServer, getImageServer } from "./config/servers"
 import { apiRateLimiter } from "./common/middlewares/rateLimiter.middleware";
 import { errorHandler, notFoundHandler } from "./common/middlewares/error.middleware";
 import { sendSuccess } from "./common/utils/response.util";
+import { httpMetricsMiddleware } from "./common/middlewares/metrics.middleware";
+import { metricsRegistry } from "./config/metrics";
 
 const app = express();
 
@@ -33,6 +35,16 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(pinoHttp({ logger }));
 app.use(apiRateLimiter);
+app.use(httpMetricsMiddleware);
+
+// Scraped by Prometheus over this box's private IP only — infra/Caddyfile
+// blocks this same path on the public hostname, and the security group
+// only allows the jenkins box to reach this port at all (see
+// src/config/metrics.ts for the full reasoning).
+app.get("/metrics", async (_req, res) => {
+    res.set("Content-Type", metricsRegistry.contentType);
+    res.end(await metricsRegistry.metrics());
+});
 
 // Root: basic API info so `GET /` doesn't fall through to a bare 404
 app.get("/", (_req, res) => {

@@ -17,6 +17,7 @@ import { newDeviceLoginTemplate, passwordResetTemplate } from "../../services/em
 import { recordAction } from "../../services/audit.service";
 import { env } from "../../config/env";
 import { logger } from "../../config/logger";
+import { loginsTotal, registrationsTotal } from "../../config/metrics";
 
 export interface RegisterInput {
     email: string;
@@ -126,6 +127,7 @@ export async function register(input: RegisterInput, meta: RequestMeta = {}) {
     if (!user) throw AppError.internal("Failed to create user");
 
     await recordAction({ userId: user.id, action: "user.register", entity: "user", entityId: user.id });
+    registrationsTotal.inc({ role: user.role });
 
     const tokens = await issueTokenPair(user, meta);
     return { user: toPublicUser(user), ...tokens };
@@ -136,9 +138,11 @@ const DEMO_EMAIL_DOMAIN = "@homelink.dev";
 export async function login(email: string, password: string, meta: RequestMeta = {}) {
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
     if (!user || !(await comparePassword(password, user.passwordHash))) {
+        loginsTotal.inc({ outcome: "invalid_credentials" });
         throw AppError.unauthorized("Invalid email or password");
     }
     if (!user.isActive) {
+        loginsTotal.inc({ outcome: "deactivated" });
         throw AppError.forbidden("This account has been deactivated");
     }
 
@@ -150,8 +154,11 @@ export async function login(email: string, password: string, meta: RequestMeta =
     const isDemoAccount = user.email.endsWith(DEMO_EMAIL_DOMAIN);
 
     if (!isDemoAccount && !(await isKnownDevice(user.id, meta))) {
+        loginsTotal.inc({ outcome: "challenge_issued" });
         return issueLoginChallenge(user, meta);
     }
+
+    loginsTotal.inc({ outcome: "success" });
 
     const tokens = await issueTokenPair(user, meta);
     return { user: toPublicUser(user), ...tokens };

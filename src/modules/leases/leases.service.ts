@@ -24,6 +24,7 @@ import { setPasswordTemplate } from "../../services/email.templates";
 import { env } from "../../config/env";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 import { recomputePropertyStatus } from "../properties/properties.service";
+import { leasesCreatedTotal } from "../../config/metrics";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
@@ -266,6 +267,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
     await recomputePropertyStatus(property.id);
 
     await recordAction({ userId: creator.id, action: "lease.create", entity: "lease", entityId: lease.id });
+    leasesCreatedTotal.inc({ new_tenant: String(!!input.newTenant) });
 
     if (rawPasswordResetToken) {
         const link = `${env.appUrl}/set-password?token=${rawPasswordResetToken}`;

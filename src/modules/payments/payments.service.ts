@@ -14,6 +14,7 @@ import { publishPaymentSucceeded } from "../../services/events/eventBridge.servi
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 import { nextDocumentNumber } from "../../common/utils/sequence.util";
 import { getTenantSummaries, getTenantSummary } from "../../common/utils/tenantSummary.util";
+import { paymentsTotal } from "../../config/metrics";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
@@ -156,6 +157,7 @@ export async function markPaymentSuccess(paymentId: string): Promise<PaymentRow>
     // the very first (and only) call too. paidAt is only ever set by the
     // finalization work below, so it's the real "already done" signal.
     if (payment.paidAt) return payment;
+    paymentsTotal.inc({ method: payment.method, outcome: "success" });
 
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, payment.invoiceId)).limit(1);
     if (!invoice) throw AppError.notFound("Invoice not found");
@@ -216,6 +218,7 @@ export async function markPaymentFailed(paymentId: string, reason: string): Prom
     const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
     if (!payment) throw AppError.notFound("Payment not found");
     if (payment.status !== "pending") return payment;
+    paymentsTotal.inc({ method: payment.method, outcome: "failed" });
 
     const [updated] = await db
         .update(payments)
@@ -265,6 +268,7 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
             .returning();
 
         if (!payment) throw AppError.internal("Failed to create payment");
+        paymentsTotal.inc({ method: input.method, outcome: "pending" });
 
         await recordAction({
             userId: tenant.id,
@@ -321,6 +325,7 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
     if (result.status === "success") {
         finalPayment = await markPaymentSuccess(payment.id);
     } else if (result.status === "failed") {
+        paymentsTotal.inc({ method: input.method, outcome: "failed" });
         await notify({
             userId: lease.tenantId,
             type: "payment.failed",
@@ -329,6 +334,8 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
             metadata: { invoiceId: invoice.id, paymentId: payment.id },
             sendEmail: true
         });
+    } else {
+        paymentsTotal.inc({ method: input.method, outcome: "pending" });
     }
 
     await recordAction({

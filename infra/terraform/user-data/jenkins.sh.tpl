@@ -337,7 +337,7 @@ fetch_dashboard() {
       # instead of hardcoding each spelling as it's discovered.
       sed -i -E \
         -e 's/$$\{?[Dd][Ss][_-][A-Za-z0-9_-]*\}?/prometheus/g' \
-        -e 's/$${datasource}/prometheus/g' \
+        -e 's/$$\{datasource\}/prometheus/g' \
         "/opt/monitoring/grafana-provisioning/dashboards/json/$name.json" || true
       # Override the generic community-dashboard title with a clear one.
       jq --arg title "$title" '.title = $title | .id = null' \

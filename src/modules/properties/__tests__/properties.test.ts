@@ -502,6 +502,23 @@ describe("Properties module", () => {
     });
 
     describe("GET /api/v1/properties/units", () => {
+        it("includes unitType, description, and deposit in the response", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "A001", unitType: "2 Bedroom", description: "Corner unit", rentAmount: 500, deposit: 1000 });
+
+            const res = await testRequest()
+                .get(`/api/v1/properties/units?propertyId=${property.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            const a001 = res.body.data.find((u: { label: string }) => u.label === "A001");
+            expect(a001.unitType).toBe("2 Bedroom");
+            expect(a001.description).toBe("Corner unit");
+            expect(a001.deposit).toBe("1000.00");
+        });
+
         it("searches available units scoped to the requester's own properties", async () => {
             const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
             const property = await createProperty({ ownerId: owner.id });

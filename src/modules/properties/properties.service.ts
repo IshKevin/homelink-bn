@@ -680,10 +680,13 @@ export async function listAvailableUnits(requester: Requester, filters: ListAvai
             id: propertyUnits.id,
             propertyId: propertyUnits.propertyId,
             label: propertyUnits.label,
+            unitType: propertyUnits.unitType,
+            description: propertyUnits.description,
             floor: propertyUnits.floor,
             bedrooms: propertyUnits.bedrooms,
             bathrooms: propertyUnits.bathrooms,
             rentAmount: propertyUnits.rentAmount,
+            deposit: propertyUnits.deposit,
             status: propertyUnits.status,
             propertyTitle: properties.title,
             propertyAddressLine: properties.addressLine

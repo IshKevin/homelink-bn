@@ -123,7 +123,41 @@ describe("Leases module", () => {
             expect(res.body.data.tenantId).toBe(createdTenant!.id);
 
             const [updatedUnit] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unit!.id)).limit(1);
-            expect(updatedUnit!.status).toBe("available"); // still available until signed, matching existing behavior
+            expect(updatedUnit!.status).toBe("occupied"); // occupied immediately on assignment, not only once signed
+        });
+
+        it("does not let a second tenant be assigned to a unit that already has a pending (unsigned) lease", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id)).limit(1);
+
+            const firstRes = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    unitId: unit!.id,
+                    newTenant: { email: "first-tenant@example.com", firstName: "First", lastName: "Tenant", phone: "0788000444" },
+                    startDate: "2026-01-01",
+                    rentAmount: 800
+                });
+            expect(firstRes.status).toBe(201);
+            expect(firstRes.body.data.status).toBe("pending_signatures");
+
+            const secondRes = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    unitId: unit!.id,
+                    newTenant: { email: "second-tenant@example.com", firstName: "Second", lastName: "Tenant", phone: "0788000555" },
+                    startDate: "2026-01-01",
+                    rentAmount: 800
+                });
+            expect(secondRes.status).toBe(409);
+
+            const [secondTenant] = await db.select().from(users).where(eq(users.email, "second-tenant@example.com")).limit(1);
+            expect(secondTenant).toBeUndefined(); // no orphaned account created for the rejected attempt
         });
 
         it("rejects newTenant with an email that already exists, and creates no lease", async () => {

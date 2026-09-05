@@ -244,8 +244,18 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
 
         if (!createdLease) throw AppError.internal("Failed to create lease");
 
+        // The unit becomes occupied the moment it's assigned, not when the
+        // lease is later signed — otherwise two tenants could both be
+        // assigned to the same unit while their leases are still pending
+        // signatures (confirmed live: this was a real gap before this
+        // change). Signing still moves the *lease* from pending_signatures
+        // to active; it no longer needs to touch the unit's status.
+        await tx.update(propertyUnits).set({ status: "occupied", updatedAt: new Date() }).where(eq(propertyUnits.id, unit.id));
+
         return { lease: createdLease, tenant: tenantRow };
     });
+
+    await recomputePropertyStatus(property.id);
 
     await recordAction({ userId: creator.id, action: "lease.create", entity: "lease", entityId: lease.id });
 

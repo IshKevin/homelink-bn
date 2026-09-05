@@ -1,10 +1,10 @@
-import { and, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../database";
 import { properties, propertyImages, propertyUnits, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
-import { readExcelRows } from "../../services/excel.service";
+import { buildExcelBuffer, readExcelRows } from "../../services/excel.service";
 import { recordAction } from "../../services/audit.service";
 import { notify } from "../../services/notification.service";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
@@ -60,26 +60,40 @@ export interface UpdatePropertyInput {
 
 export interface CreateUnitInput {
     label: string;
+    unitType?: string;
+    description?: string;
     floor?: number;
     bedrooms?: number;
     bathrooms?: number;
     rentAmount: number;
+    deposit?: number;
 }
+
+// "occupied" is deliberately not settable here — it's only ever set by
+// initiateLeaseAssignment (createLease) or cleared by lease termination,
+// never a manual landlord edit. See assertManualStatus below.
+export type ManualUnitStatus = "available" | "maintenance" | "inactive";
 
 export interface UpdateUnitInput {
     label?: string;
+    unitType?: string;
+    description?: string;
     floor?: number;
     bedrooms?: number;
     bathrooms?: number;
     rentAmount?: number;
+    deposit?: number;
+    status?: ManualUnitStatus;
 }
 
 export interface GenerateUnitsInput {
     count: number;
     floors?: number;
+    unitType?: string;
     bedrooms?: number;
     bathrooms?: number;
     rentAmount: number;
+    deposit?: number;
 }
 
 export interface ListAvailableUnitsFilters {
@@ -287,22 +301,50 @@ async function getUnitOrThrow(unitId: string): Promise<PropertyUnitRow> {
     return unit;
 }
 
+/**
+ * Unit numbers/labels must be unique within a property (a database
+ * constraint backs this too — property_units_property_id_label_idx — this
+ * is just what turns that into a clean 409 instead of a raw constraint
+ * error surfacing to the client).
+ */
+async function assertNoDuplicateLabel(propertyId: string, label: string, excludeUnitId?: string): Promise<void> {
+    const conditions = [eq(propertyUnits.propertyId, propertyId), eq(propertyUnits.label, label)];
+    const [existing] = await db.select({ id: propertyUnits.id }).from(propertyUnits).where(and(...conditions)).limit(1);
+    if (existing && existing.id !== excludeUnitId) {
+        throw AppError.conflict(`Unit number "${label}" already exists in this property`);
+    }
+}
+
+/** Batch version for generate/import — one query instead of one per label. */
+async function findDuplicateLabels(propertyId: string, labels: string[]): Promise<string[]> {
+    if (labels.length === 0) return [];
+    const existingRows = await db
+        .select({ label: propertyUnits.label })
+        .from(propertyUnits)
+        .where(and(eq(propertyUnits.propertyId, propertyId), inArray(propertyUnits.label, labels)));
+    return existingRows.map((r) => r.label);
+}
+
 export async function createUnit(propertyId: string, requester: Requester, input: CreateUnitInput) {
     const property = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     const [propertyRow] = property;
     if (!propertyRow) throw AppError.notFound("Property not found");
 
     await assertPropertyWriteAccess(propertyRow, requester);
+    await assertNoDuplicateLabel(propertyId, input.label);
 
     const [unit] = await db
         .insert(propertyUnits)
         .values({
             propertyId,
             label: input.label,
+            unitType: input.unitType,
+            description: input.description,
             floor: input.floor,
             bedrooms: input.bedrooms !== undefined ? String(input.bedrooms) : undefined,
             bathrooms: input.bathrooms !== undefined ? String(input.bathrooms) : undefined,
             rentAmount: String(input.rentAmount),
+            deposit: input.deposit !== undefined ? String(input.deposit) : undefined,
             status: "available"
         })
         .returning();
@@ -335,11 +377,26 @@ export async function updateUnit(propertyId: string, unitId: string, requester: 
     const unit = await getUnitOrThrow(unitId);
     if (unit.propertyId !== propertyId) throw AppError.notFound("Unit not found");
 
-    const { bedrooms, bathrooms, rentAmount, ...rest } = input;
+    if (input.label && input.label !== unit.label) {
+        await assertNoDuplicateLabel(propertyId, input.label, unitId);
+    }
+
+    // "occupied" isn't reachable through here at all — UpdateUnitInput's
+    // status is typed to ManualUnitStatus, which excludes it. A unit only
+    // becomes occupied via a lease assignment (createLease) and only
+    // becomes available again via lease termination — never a direct manual
+    // edit, even back to "available", since that would let a second tenant
+    // be assigned on top of an existing lease.
+    if (unit.status === "occupied" && input.status) {
+        throw AppError.conflict("This unit currently has an active tenant — end that lease before changing its status");
+    }
+
+    const { bedrooms, bathrooms, rentAmount, deposit, ...rest } = input;
     const updates: Partial<typeof propertyUnits.$inferInsert> = { ...rest };
     if (bedrooms !== undefined) updates.bedrooms = String(bedrooms);
     if (bathrooms !== undefined) updates.bathrooms = String(bathrooms);
     if (rentAmount !== undefined) updates.rentAmount = String(rentAmount);
+    if (deposit !== undefined) updates.deposit = String(deposit);
     updates.updatedAt = new Date();
 
     const [updated] = await db.update(propertyUnits).set(updates).where(eq(propertyUnits.id, unitId)).returning();
@@ -365,6 +422,7 @@ export async function generateUnits(propertyId: string, requester: Requester, in
     const bedrooms = input.bedrooms !== undefined ? String(input.bedrooms) : undefined;
     const bathrooms = input.bathrooms !== undefined ? String(input.bathrooms) : undefined;
     const rentAmount = String(input.rentAmount);
+    const deposit = input.deposit !== undefined ? String(input.deposit) : undefined;
 
     const values: (typeof propertyUnits.$inferInsert)[] = [];
     if (input.floors) {
@@ -373,14 +431,31 @@ export async function generateUnits(propertyId: string, requester: Requester, in
         for (let floor = 1; floor <= input.floors && remaining > 0; floor++) {
             const onThisFloor = Math.min(unitsPerFloor, remaining);
             for (let unit = 1; unit <= onThisFloor; unit++) {
-                values.push({ propertyId, label: `Floor ${floor} - Unit ${unit}`, floor, bedrooms, bathrooms, rentAmount, status: "available" });
+                values.push({
+                    propertyId,
+                    label: `Floor ${floor} - Unit ${unit}`,
+                    unitType: input.unitType,
+                    floor,
+                    bedrooms,
+                    bathrooms,
+                    rentAmount,
+                    deposit,
+                    status: "available"
+                });
             }
             remaining -= onThisFloor;
         }
     } else {
         for (let unit = 1; unit <= input.count; unit++) {
-            values.push({ propertyId, label: `Unit ${unit}`, bedrooms, bathrooms, rentAmount, status: "available" });
+            values.push({ propertyId, label: `Unit ${unit}`, unitType: input.unitType, bedrooms, bathrooms, rentAmount, deposit, status: "available" });
         }
+    }
+
+    const duplicates = await findDuplicateLabels(propertyId, values.map((v) => v.label));
+    if (duplicates.length > 0) {
+        throw AppError.conflict(
+            `${duplicates.length} generated unit number(s) already exist in this property: ${duplicates.join(", ")}. Remove or rename the existing ones first.`
+        );
     }
 
     const created = await db.insert(propertyUnits).values(values).returning();
@@ -398,40 +473,62 @@ export async function generateUnits(propertyId: string, requester: Requester, in
 
 const importUnitRowSchema = z.object({
     label: z.union([z.string(), z.number()]).transform(String).pipe(z.string().min(1).max(100)),
+    unitType: z.string().max(100).optional(),
+    description: z.string().max(2000).optional(),
     floor: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int()).optional(),
     bedrooms: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int().nonnegative()).optional(),
     bathrooms: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int().nonnegative()).optional(),
-    rentAmount: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().positive())
+    rentAmount: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().positive()),
+    deposit: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().nonnegative()).optional(),
+    // "occupied" is deliberately not accepted from a spreadsheet — there's no
+    // real tenant assignment behind an imported row, only a real lease can
+    // make a unit occupied. Blank/unrecognized status defaults to available.
+    status: z
+        .string()
+        .trim()
+        .toLowerCase()
+        .pipe(z.enum(["available", "maintenance", "inactive"]))
+        .optional()
 });
 
-/**
- * Imports one unit per data row from an uploaded .xlsx file — header row
- * (case-insensitive): label, floor, bedrooms, bathrooms, rentAmount. Unlike
- * generateUnits, each row carries its own price, matching a landlord's real
- * rent roll rather than a single shared default. All-or-nothing: if any row
- * fails validation, nothing is inserted.
- */
-export async function importUnitsFromExcel(propertyId: string, requester: Requester, fileBuffer: Buffer) {
-    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
-    if (!propertyRow) throw AppError.notFound("Property not found");
-    await assertPropertyWriteAccess(propertyRow, requester);
+export interface ImportUnitRowError {
+    row: number;
+    message: string;
+}
 
+export interface ParsedImportRows {
+    values: (typeof propertyUnits.$inferInsert)[];
+    errors: ImportUnitRowError[];
+}
+
+/**
+ * Shared by importUnitsFromExcel (commits) and previewImportUnitsFromExcel
+ * (dry-run) — parses + validates every row, including duplicate-label
+ * detection both within the file itself and against units the property
+ * already has. Never touches the database.
+ */
+async function parseUnitsWorkbook(propertyId: string, fileBuffer: Buffer): Promise<ParsedImportRows> {
     const rawRows = await readExcelRows(fileBuffer);
     if (rawRows.length === 0) {
         throw AppError.badRequest("The uploaded file has no data rows");
     }
 
     const values: (typeof propertyUnits.$inferInsert)[] = [];
-    const errors: { row: number; message: string }[] = [];
+    const errors: ImportUnitRowError[] = [];
+    const labelsSeenInFile = new Map<string, number>(); // label -> first row number seen
 
     rawRows.forEach((raw, index) => {
         const rowNumber = index + 2; // row 1 is the header
         const result = importUnitRowSchema.safeParse({
-            label: raw["label"],
+            label: raw["label"] ?? raw["unit number"] ?? raw["unit name"],
+            unitType: raw["unittype"] ?? raw["unit type"],
+            description: raw["description"],
             floor: raw["floor"],
             bedrooms: raw["bedrooms"],
             bathrooms: raw["bathrooms"],
-            rentAmount: raw["rentamount"] ?? raw["rent amount"] ?? raw["rent"]
+            rentAmount: raw["rentamount"] ?? raw["rent amount"] ?? raw["monthly rent"] ?? raw["rent"],
+            deposit: raw["deposit"],
+            status: raw["status"]
         });
 
         if (!result.success) {
@@ -439,16 +536,100 @@ export async function importUnitsFromExcel(propertyId: string, requester: Reques
             return;
         }
 
+        const firstSeenAt = labelsSeenInFile.get(result.data.label);
+        if (firstSeenAt !== undefined) {
+            errors.push({ row: rowNumber, message: `Duplicate unit number "${result.data.label}" (also on row ${firstSeenAt})` });
+            return;
+        }
+        labelsSeenInFile.set(result.data.label, rowNumber);
+
         values.push({
             propertyId,
             label: result.data.label,
+            unitType: result.data.unitType,
+            description: result.data.description,
             floor: result.data.floor,
             bedrooms: result.data.bedrooms !== undefined ? String(result.data.bedrooms) : undefined,
             bathrooms: result.data.bathrooms !== undefined ? String(result.data.bathrooms) : undefined,
             rentAmount: String(result.data.rentAmount),
-            status: "available"
+            deposit: result.data.deposit !== undefined ? String(result.data.deposit) : undefined,
+            status: result.data.status ?? "available"
         });
     });
+
+    const duplicatesInDb = await findDuplicateLabels(propertyId, values.map((v) => v.label));
+    if (duplicatesInDb.length > 0) {
+        for (const [rowIndex, value] of values.entries()) {
+            if (duplicatesInDb.includes(value.label)) {
+                errors.push({ row: rowIndex + 2, message: `Unit number "${value.label}" already exists in this property` });
+            }
+        }
+    }
+
+    return { values, errors };
+}
+
+/**
+ * Parses and validates an uploaded .xlsx file WITHOUT creating anything —
+ * lets the frontend show the landlord a preview (valid rows + row-level
+ * errors) before they confirm. Confirming re-submits the same file to
+ * importUnitsFromExcel.
+ */
+export async function previewImportUnitsFromExcel(
+    propertyId: string,
+    requester: Requester,
+    fileBuffer: Buffer
+): Promise<ParsedImportRows> {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+    await assertPropertyWriteAccess(propertyRow, requester);
+
+    return parseUnitsWorkbook(propertyId, fileBuffer);
+}
+
+const UNIT_IMPORT_COLUMNS = [
+    { header: "Unit Number", key: "label", width: 18 },
+    { header: "Unit Type", key: "unitType", width: 18 },
+    { header: "Floor", key: "floor", width: 10 },
+    { header: "Bedrooms", key: "bedrooms", width: 12 },
+    { header: "Bathrooms", key: "bathrooms", width: 12 },
+    { header: "Monthly Rent", key: "rentAmount", width: 15 },
+    { header: "Deposit", key: "deposit", width: 15 },
+    { header: "Description", key: "description", width: 30 },
+    { header: "Status", key: "status", width: 14 }
+];
+
+/** Downloadable starting point for importUnitsFromExcel — same columns, one example row. */
+export async function getUnitsImportTemplate(): Promise<Buffer> {
+    return buildExcelBuffer("Units", UNIT_IMPORT_COLUMNS, [
+        {
+            label: "A001",
+            unitType: "2 Bedroom",
+            floor: 1,
+            bedrooms: 2,
+            bathrooms: 1,
+            rentAmount: 150000,
+            deposit: 150000,
+            description: "Corner unit, street-facing",
+            status: "available"
+        }
+    ]);
+}
+
+/**
+ * Imports one unit per data row from an uploaded .xlsx file — header row
+ * (case-insensitive): label (or "unit number"/"unit name"), unitType, floor,
+ * bedrooms, bathrooms, rentAmount, deposit, description, status. Unlike
+ * generateUnits, each row carries its own price, matching a landlord's real
+ * rent roll rather than a single shared default. All-or-nothing: if any row
+ * fails validation (including a duplicate unit number), nothing is imported.
+ */
+export async function importUnitsFromExcel(propertyId: string, requester: Requester, fileBuffer: Buffer) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+    await assertPropertyWriteAccess(propertyRow, requester);
+
+    const { values, errors } = await parseUnitsWorkbook(propertyId, fileBuffer);
 
     if (errors.length > 0) {
         throw AppError.badRequest("Some rows in the file are invalid — nothing was imported", errors);

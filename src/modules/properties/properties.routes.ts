@@ -24,10 +24,12 @@ import {
     generateUnitsHandler,
     getPropertyDocumentHandler,
     getPropertyHandler,
+    getUnitsImportTemplateHandler,
     importUnitsHandler,
     listAvailableUnitsHandler,
     listPropertiesHandler,
     listUnitsHandler,
+    previewImportUnitsHandler,
     rejectPropertyHandler,
     setPropertyDocumentHandler,
     updatePropertyHandler,
@@ -186,6 +188,21 @@ router.get("/", validate(listPropertiesSchema), listPropertiesHandler);
  *               $ref: '#/components/schemas/ApiError'
  */
 router.get("/units", validate(listAvailableUnitsSchema), listAvailableUnitsHandler);
+
+/**
+ * @openapi
+ * /properties/units/import-template:
+ *   get:
+ *     tags: [Properties]
+ *     summary: Download a starter .xlsx template for importing units (see POST /properties/{id}/units/import)
+ *     responses:
+ *       200:
+ *         description: Binary xlsx template
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema: { type: string, format: binary }
+ */
+router.get("/units/import-template", getUnitsImportTemplateHandler);
 
 /**
  * @openapi
@@ -426,11 +443,47 @@ router.post(
 
 /**
  * @openapi
+ * /properties/{id}/units/import/preview:
+ *   post:
+ *     tags: [Properties]
+ *     summary: Parse and validate an uploaded .xlsx file WITHOUT creating anything, for a confirm-before-import preview
+ *     description: Same validation as POST /units/import (including duplicate unit-number detection, both within the file and against the property's existing units). Confirming re-submits the same file to /units/import.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [file]
+ *             properties:
+ *               file: { type: string, format: binary }
+ *     responses:
+ *       200:
+ *         description: "{ values: unit rows that would be created, errors: { row, message }[] }"
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.post(
+    "/:id/units/import/preview",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    upload.single("file"),
+    previewImportUnitsHandler
+);
+
+/**
+ * @openapi
  * /properties/{id}/units/import:
  *   post:
  *     tags: [Properties]
  *     summary: Bulk-create units from an uploaded .xlsx file, one row per unit — owner/agent/house_manager/admin only
- *     description: Header row (case-insensitive) columns - label, floor, bedrooms, bathrooms, rentAmount. All-or-nothing - if any row is invalid, nothing is imported and the row errors are returned.
+ *     description: Header row (case-insensitive) columns - label (or "unit number"/"unit name"), unitType, floor, bedrooms, bathrooms, rentAmount, deposit, description, status. All-or-nothing - if any row is invalid (including a duplicate unit number), nothing is imported and the row errors are returned.
  *     parameters:
  *       - in: path
  *         name: id

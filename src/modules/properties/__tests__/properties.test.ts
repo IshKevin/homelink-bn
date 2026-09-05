@@ -543,4 +543,177 @@ describe("Properties module", () => {
             expect(res.status).toBe(403);
         });
     });
+
+    describe("Unit numbers must be unique within a property", () => {
+        it("rejects creating a unit whose label already exists in the property", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "A001", rentAmount: 500 });
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "A001", rentAmount: 600 });
+            expect(res.status).toBe(409);
+        });
+
+        it("rejects generating units that would collide with an existing label", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "Unit 1", rentAmount: 500 });
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/generate`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ count: 2, rentAmount: 500 }); // generates "Unit 1", "Unit 2" — collides
+            expect(res.status).toBe(409);
+
+            const listRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(listRes.body.data).toHaveLength(2); // default unit + the one manually created — nothing from the failed generate
+        });
+
+        it("allows renaming a unit to a label that isn't used elsewhere in the property, but not to one that is", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const createA = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "A001", rentAmount: 500 });
+            const createB = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "B001", rentAmount: 500 });
+
+            const collideRes = await testRequest()
+                .patch(`/api/v1/properties/${property.id}/units/${createB.body.data.id}`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "A001" });
+            expect(collideRes.status).toBe(409);
+
+            const renameRes = await testRequest()
+                .patch(`/api/v1/properties/${property.id}/units/${createA.body.data.id}`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "A001-Renamed" });
+            expect(renameRes.status).toBe(200);
+        });
+    });
+
+    describe("Manual unit status changes", () => {
+        it("rejects setting status to 'occupied' directly (only a lease assignment can do that)", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+
+            const res = await testRequest()
+                .patch(`/api/v1/properties/${property.id}/units/${unit!.id}`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ status: "occupied" });
+            expect(res.status).toBe(400);
+        });
+
+        it("allows marking an available unit under maintenance or inactive", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+
+            const maintenanceRes = await testRequest()
+                .patch(`/api/v1/properties/${property.id}/units/${unit!.id}`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ status: "maintenance" });
+            expect(maintenanceRes.status).toBe(200);
+            expect(maintenanceRes.body.data.status).toBe("maintenance");
+
+            const inactiveRes = await testRequest()
+                .patch(`/api/v1/properties/${property.id}/units/${unit!.id}`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ status: "inactive" });
+            expect(inactiveRes.status).toBe(200);
+            expect(inactiveRes.body.data.status).toBe("inactive");
+        });
+
+        it("rejects any manual status change on a unit that already has an active tenant", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+            await db.update(propertyUnits).set({ status: "occupied" }).where(eq(propertyUnits.id, unit!.id));
+
+            const res = await testRequest()
+                .patch(`/api/v1/properties/${property.id}/units/${unit!.id}`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ status: "maintenance" });
+            expect(res.status).toBe(409);
+        });
+    });
+
+    describe("POST /api/v1/properties/:id/units/import/preview", () => {
+        async function buildUnitsWorkbook(rows: (string | number)[][]): Promise<Buffer> {
+            const ExcelJS = (await import("exceljs")).default;
+            const workbook = new ExcelJS.Workbook();
+            const sheet = workbook.addWorksheet("Units");
+            sheet.addRow(["label", "floor", "bedrooms", "bathrooms", "rentAmount"]);
+            rows.forEach((row) => sheet.addRow(row));
+            const buffer = await workbook.xlsx.writeBuffer();
+            return Buffer.from(buffer);
+        }
+
+        it("returns valid rows and row errors without creating anything", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const file = await buildUnitsWorkbook([
+                ["A001", 1, 2, 1, 450],
+                ["A002", 1, 1, 1, -50] // invalid
+            ]);
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/import/preview`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .attach("file", file, "units.xlsx");
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.values).toHaveLength(1);
+            expect(res.body.data.errors).toHaveLength(1);
+
+            const listRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(listRes.body.data).toHaveLength(1); // only the default unit — preview created nothing
+        });
+
+        it("flags a duplicate label against an existing unit in the preview", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "A001", rentAmount: 500 });
+
+            const file = await buildUnitsWorkbook([["A001", 1, 2, 1, 450]]);
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units/import/preview`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .attach("file", file, "units.xlsx");
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.errors).toEqual([expect.objectContaining({ message: expect.stringContaining("already exists") })]);
+        });
+    });
+
+    describe("GET /api/v1/properties/units/import-template", () => {
+        it("returns a downloadable xlsx template", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+            const res = await testRequest()
+                .get("/api/v1/properties/units/import-template")
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(res.status).toBe(200);
+            expect(res.headers["content-type"]).toContain("spreadsheetml");
+        });
+    });
 });

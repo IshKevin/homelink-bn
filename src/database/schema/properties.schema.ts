@@ -1,4 +1,4 @@
-import { boolean, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users.schema";
 
@@ -12,6 +12,11 @@ export const propertyTypeEnum = pgEnum("property_type", [
 ]);
 export const propertyCategoryEnum = pgEnum("property_category", ["residential", "commercial"]);
 export const propertyStatusEnum = pgEnum("property_status", ["available", "occupied"]);
+// Separate from propertyStatusEnum on purpose: a *unit* can be pulled out of
+// service (maintenance) or deliberately not offered (inactive) independent
+// of whether the property as a whole has any vacancy — those two states
+// don't make sense for a property roll-up, only for one of its units.
+export const unitStatusEnum = pgEnum("unit_status", ["available", "occupied", "maintenance", "inactive"]);
 export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approved", "rejected"]);
 
 export const properties = pgTable("properties", {
@@ -61,23 +66,37 @@ export const propertyImages = pgTable("property_images", {
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 
-export const propertyUnits = pgTable("property_units", {
-    id: uuid("id").defaultRandom().primaryKey(),
-    propertyId: uuid("property_id")
-        .notNull()
-        .references(() => properties.id, { onDelete: "cascade" }),
-    label: varchar("label", { length: 100 }).notNull(),
-    floor: integer("floor"),
-    bedrooms: numeric("bedrooms", { precision: 4, scale: 0 }),
-    bathrooms: numeric("bathrooms", { precision: 4, scale: 0 }),
-    rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
-    status: propertyStatusEnum("status").notNull().default("available"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-        .notNull()
-        .defaultNow()
-        .$onUpdate(() => new Date())
-});
+export const propertyUnits = pgTable(
+    "property_units",
+    {
+        id: uuid("id").defaultRandom().primaryKey(),
+        propertyId: uuid("property_id")
+            .notNull()
+            .references(() => properties.id, { onDelete: "cascade" }),
+        label: varchar("label", { length: 100 }).notNull(),
+        // Free-text descriptor (e.g. "2 Bedroom", "Shop", "Office") — distinct
+        // from bedrooms/bathrooms, which stay numeric for filtering/search.
+        unitType: varchar("unit_type", { length: 100 }),
+        description: text("description"),
+        floor: integer("floor"),
+        bedrooms: numeric("bedrooms", { precision: 4, scale: 0 }),
+        bathrooms: numeric("bathrooms", { precision: 4, scale: 0 }),
+        rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
+        deposit: numeric("deposit", { precision: 12, scale: 2 }),
+        status: unitStatusEnum("status").notNull().default("available"),
+        createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+        updatedAt: timestamp("updated_at", { withTimezone: true })
+            .notNull()
+            .defaultNow()
+            .$onUpdate(() => new Date())
+    },
+    (table) => [
+        // Database-level backstop against duplicate unit numbers within the
+        // same property — app-level validation checks this too (for a clean
+        // error message), but this is the actual guarantee.
+        uniqueIndex("property_units_property_id_label_idx").on(table.propertyId, table.label)
+    ]
+);
 
 export const propertiesRelations = relations(properties, ({ one, many }) => ({
     owner: one(users, { fields: [properties.ownerId], references: [users.id] }),

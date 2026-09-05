@@ -111,13 +111,23 @@ export const updatePropertySchema = {
         .superRefine((data, ctx) => checkCategoryTypeConsistency(data, ctx, { requireFields: false }))
 };
 
+// Excludes "occupied" everywhere a human picks a unit's status directly —
+// that value is only ever set by createLease (tenant assignment) and
+// cleared by lease termination, never a manual edit. See properties.service.ts's
+// updateUnit / ManualUnitStatus.
+const manualUnitStatusValues = ["available", "maintenance", "inactive"] as const;
+const unitStatusValues = ["available", "occupied", "maintenance", "inactive"] as const;
+
 export const createUnitSchema = {
     body: z.object({
         label: shortText(),
+        unitType: shortText().optional(),
+        description: longText().optional(),
         floor: z.number().int().optional(),
         bedrooms: z.number().int().nonnegative().optional(),
         bathrooms: z.number().int().nonnegative().optional(),
-        rentAmount: z.number().positive()
+        rentAmount: z.number().positive(),
+        deposit: z.number().nonnegative().optional()
     })
 };
 
@@ -125,10 +135,14 @@ export const updateUnitSchema = {
     body: z
         .object({
             label: shortText().optional(),
+            unitType: shortText().optional(),
+            description: longText().optional(),
             floor: z.number().int().optional(),
             bedrooms: z.number().int().nonnegative().optional(),
             bathrooms: z.number().int().nonnegative().optional(),
-            rentAmount: z.number().positive().optional()
+            rentAmount: z.number().positive().optional(),
+            deposit: z.number().nonnegative().optional(),
+            status: z.enum(manualUnitStatusValues).optional()
         })
         .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
 };
@@ -137,16 +151,18 @@ export const generateUnitsSchema = {
     body: z.object({
         count: z.number().int().min(1).max(500),
         floors: z.number().int().min(1).max(500).optional(),
+        unitType: shortText().optional(),
         bedrooms: z.number().int().nonnegative().optional(),
         bathrooms: z.number().int().nonnegative().optional(),
-        rentAmount: z.number().positive()
+        rentAmount: z.number().positive(),
+        deposit: z.number().nonnegative().optional()
     })
 };
 
 export const listAvailableUnitsSchema = {
     query: z.object({
         search: shortText().optional(),
-        status: z.enum(["available", "occupied"]).optional(),
+        status: z.enum(unitStatusValues).optional(),
         propertyId: z.string().uuid().optional()
     })
 };

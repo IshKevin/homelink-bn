@@ -11,6 +11,7 @@ import {
     payments,
     platformSettings,
     properties,
+    propertyUnits,
     suspensionRequests,
     users
 } from "../../database/schema";
@@ -29,7 +30,16 @@ export interface OwnerDashboard {
         occupiedProperties: number;
         vacantUnits: number;
         occupancyRatePercent: number;
+        // Real property_units counts (a single multi-unit apartment building
+        // is one "property" above but could be many units) — the above four
+        // fields are kept as-is for backward compatibility with whatever
+        // already reads them; these are the accurate per-unit numbers.
+        totalUnits: number;
+        occupiedUnits: number;
+        availableUnits: number;
+        maintenanceUnitsCount: number;
     };
+    totalTenants: number;
     maintenanceExpenses: { thisMonth: number; thisYear: number };
     netProfit: { thisMonth: number; thisYear: number };
 }
@@ -112,6 +122,21 @@ export async function getOwnerDashboard(ownerId: string): Promise<OwnerDashboard
     const vacantUnits = totalProperties - occupiedProperties;
     const occupancyRatePercent = totalProperties === 0 ? 0 : round2((occupiedProperties / totalProperties) * 100);
 
+    const unitCounts = await db
+        .select({ status: propertyUnits.status, count: sql<number>`count(*)::int` })
+        .from(propertyUnits)
+        .innerJoin(properties, eq(propertyUnits.propertyId, properties.id))
+        .where(eq(properties.ownerId, ownerId))
+        .groupBy(propertyUnits.status);
+    const unitCountByStatus = Object.fromEntries(unitCounts.map((r) => [r.status, r.count]));
+    const totalUnits = unitCounts.reduce((sum, r) => sum + r.count, 0);
+
+    const [tenantsRow] = await db
+        .select({ count: sql<number>`count(distinct ${leases.tenantId})::int` })
+        .from(leases)
+        .where(and(eq(leases.ownerId, ownerId), sql`${leases.status} not in ('terminated', 'expired')`));
+    const totalTenants = tenantsRow?.count ?? 0;
+
     return {
         revenue: { thisMonth: revenueThisMonth, thisYear: revenueThisYear },
         outstandingRent,
@@ -119,8 +144,13 @@ export async function getOwnerDashboard(ownerId: string): Promise<OwnerDashboard
             totalProperties,
             occupiedProperties,
             vacantUnits,
-            occupancyRatePercent
+            occupancyRatePercent,
+            totalUnits,
+            occupiedUnits: unitCountByStatus["occupied"] ?? 0,
+            availableUnits: unitCountByStatus["available"] ?? 0,
+            maintenanceUnitsCount: unitCountByStatus["maintenance"] ?? 0
         },
+        totalTenants,
         maintenanceExpenses: { thisMonth: maintenanceThisMonth, thisYear: maintenanceThisYear },
         netProfit: {
             thisMonth: revenueThisMonth - maintenanceThisMonth,

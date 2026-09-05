@@ -281,7 +281,10 @@ export async function getPropertyById(propertyId: string, requester: Requester) 
     return {
         ...property,
         totalUnits: property.units.length,
-        occupiedUnits: property.units.filter((unit) => unit.status === "occupied").length
+        occupiedUnits: property.units.filter((unit) => unit.status === "occupied").length,
+        availableUnits: property.units.filter((unit) => unit.status === "available").length,
+        maintenanceUnits: property.units.filter((unit) => unit.status === "maintenance").length,
+        inactiveUnits: property.units.filter((unit) => unit.status === "inactive").length
     };
 }
 

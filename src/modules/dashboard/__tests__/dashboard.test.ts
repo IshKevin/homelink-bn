@@ -124,6 +124,10 @@ describe("Dashboard module", () => {
             expect(data.occupancy.occupiedProperties).toBe(1);
             expect(data.occupancy.vacantUnits).toBe(0);
             expect(data.occupancy.occupancyRatePercent).toBe(100);
+            expect(data.occupancy.totalUnits).toBe(1);
+            expect(data.occupancy.occupiedUnits).toBe(1);
+            expect(data.occupancy.availableUnits).toBe(0);
+            expect(data.totalTenants).toBe(1);
             expect(data.maintenanceExpenses.thisMonth).toBe(150);
             expect(data.maintenanceExpenses.thisYear).toBe(150);
             expect(data.netProfit.thisMonth).toBe(1000 - 150);

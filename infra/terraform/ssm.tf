@@ -104,7 +104,7 @@ resource "aws_ssm_parameter" "app_name" {
 resource "aws_ssm_parameter" "cors_allowed_origins" {
   name  = "${local.ssm_prefix}/app/cors_allowed_origins"
   type  = "String"
-  value = "https://${local.frontend_public_hostname}"
+  value = join(",", concat(["https://${local.frontend_public_hostname}"], var.additional_cors_origins))
 }
 
 # One-time admin bootstrap — consumed by src/scripts/seed-admin.ts (skips

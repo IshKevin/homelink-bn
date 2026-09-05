@@ -55,6 +55,19 @@ describe("Payments module", () => {
             expect(res.status).toBe(200);
             expect(res.body.data.some((i: { id: string }) => i.id === invoice.id)).toBe(true);
         });
+
+        it("embeds a tenant summary on each invoice, list and single", async () => {
+            const { ownerToken, tenant, invoice } = await setupLeaseWithInvoice();
+
+            const listRes = await testRequest().get("/api/v1/invoices").set("Authorization", `Bearer ${ownerToken}`);
+            const found = listRes.body.data.find((i: { id: string }) => i.id === invoice.id);
+            expect(found.tenant).toMatchObject({ id: tenant.id, email: tenant.email });
+
+            const singleRes = await testRequest()
+                .get(`/api/v1/invoices/${invoice.id}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(singleRes.body.data.tenant).toMatchObject({ id: tenant.id, email: tenant.email });
+        });
     });
 
     describe("POST /api/v1/invoices/:id/pay", () => {
@@ -155,6 +168,19 @@ describe("Payments module", () => {
             const res = await testRequest().get("/api/v1/payments").set("Authorization", `Bearer ${tenantToken}`);
             expect(res.status).toBe(200);
             expect(res.body.data.some((p: { invoiceId: string }) => p.invoiceId === invoice.id)).toBe(true);
+        });
+
+        it("embeds a tenant summary on each payment instead of a bare tenantId", async () => {
+            const { ownerToken, tenant, tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "mobile_money" });
+
+            const res = await testRequest().get("/api/v1/payments").set("Authorization", `Bearer ${ownerToken}`);
+            const found = res.body.data.find((p: { invoiceId: string }) => p.invoiceId === invoice.id);
+            expect(found.tenant).toMatchObject({ id: tenant.id, email: tenant.email });
         });
 
         it("supports filtering by unitId, tenantId, and propertyId — for the unit/tenant/property payment history views", async () => {

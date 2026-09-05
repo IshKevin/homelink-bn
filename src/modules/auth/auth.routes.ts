@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { validate } from "../../common/middlewares/validate.middleware";
 import { authRateLimiter } from "../../common/middlewares/rateLimiter.middleware";
+import { authenticate } from "../../common/middlewares/auth.middleware";
 import {
+    changePasswordSchema,
     forgotPasswordSchema,
     loginSchema,
     refreshSchema,
@@ -10,6 +12,7 @@ import {
     verifyLoginChallengeSchema
 } from "./auth.validation";
 import {
+    changePasswordHandler,
     forgotPasswordHandler,
     loginHandler,
     logoutHandler,
@@ -255,5 +258,37 @@ router.post("/forgot-password", validate(forgotPasswordSchema), forgotPasswordHa
  *               $ref: '#/components/schemas/ApiError'
  */
 router.post("/reset-password", validate(resetPasswordSchema), resetPasswordHandler);
+
+/**
+ * @openapi
+ * /auth/change-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Change your own password while logged in (also clears mustChangePassword)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [currentPassword, newPassword]
+ *             properties:
+ *               currentPassword: { type: string }
+ *               newPassword: { type: string, minLength: 8 }
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       401:
+ *         description: Current password is incorrect
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.post("/change-password", authenticate, validate(changePasswordSchema), changePasswordHandler);
 
 export default router;

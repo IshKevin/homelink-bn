@@ -27,6 +27,10 @@ export const users = pgTable("users", {
     isVerified: boolean("is_verified").notNull().default(false),
     isApproved: boolean("is_approved").notNull().default(true),
     isActive: boolean("is_active").notNull().default(true),
+    // Set when a landlord/house-manager creates a tenant account directly
+    // (POST /leases with newTenant) and hands them a temp password out of
+    // band — forces them to pick their own on first login.
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
         .notNull()

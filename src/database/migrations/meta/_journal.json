@@ -57,6 +57,13 @@
       "when": 1788627389012,
       "tag": "0007_goofy_calypso",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788639584796,
+      "tag": "0008_clammy_green_goblin",
+      "breakpoints": true
     }
   ]
 }

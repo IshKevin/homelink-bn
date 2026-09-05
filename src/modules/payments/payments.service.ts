@@ -13,6 +13,7 @@ import { notify } from "../../services/notification.service";
 import { publishPaymentSucceeded } from "../../services/events/eventBridge.service";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
 import { nextDocumentNumber } from "../../common/utils/sequence.util";
+import { getTenantSummaries, getTenantSummary } from "../../common/utils/tenantSummary.util";
 
 export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
@@ -123,7 +124,7 @@ export async function listInvoices(
         .where(where);
 
     const rows = await db
-        .select({ invoice: invoices })
+        .select({ invoice: invoices, lease: leases })
         .from(invoices)
         .innerJoin(leases, eq(invoices.leaseId, leases.id))
         .where(where)
@@ -131,13 +132,17 @@ export async function listInvoices(
         .limit(pagination.limit)
         .offset(pagination.offset);
 
-    return { rows: rows.map((r) => r.invoice), total: countRow?.count ?? 0 };
+    const tenants = await getTenantSummaries(rows.map((r) => r.lease.tenantId));
+    return {
+        rows: rows.map((r) => ({ ...r.invoice, tenant: tenants.get(r.lease.tenantId) })),
+        total: countRow?.count ?? 0
+    };
 }
 
 export async function getInvoiceById(invoiceId: string, requester: Requester) {
     const { invoice, lease } = await getInvoiceWithLeaseOrThrow(invoiceId);
     await assertInvoiceAccess(lease, requester);
-    return invoice;
+    return { ...invoice, tenant: await getTenantSummary(lease.tenantId) };
 }
 
 export async function markPaymentSuccess(paymentId: string): Promise<PaymentRow> {
@@ -450,7 +455,11 @@ export async function listPayments(
         .limit(pagination.limit)
         .offset(pagination.offset);
 
-    return { rows: rows.map((r) => r.payment), total: countRow?.count ?? 0 };
+    const tenants = await getTenantSummaries(rows.map((r) => r.payment.tenantId));
+    return {
+        rows: rows.map((r) => ({ ...r.payment, tenant: tenants.get(r.payment.tenantId) })),
+        total: countRow?.count ?? 0
+    };
 }
 
 export async function exportPayments(requester: Requester, filters: ListPaymentsFilters): Promise<Buffer> {
@@ -480,8 +489,11 @@ export async function exportPayments(requester: Requester, filters: ListPayments
         .orderBy(desc(payments.createdAt))
         .limit(5000);
 
+    const tenants = await getTenantSummaries(rows.map((r) => r.payment.tenantId));
+
     const columns: ExcelColumn[] = [
         { header: "Payment Number", key: "PaymentNumber", width: 22 },
+        { header: "Tenant", key: "Tenant", width: 24 },
         { header: "Date", key: "Date", width: 15 },
         { header: "Amount", key: "Amount", width: 15 },
         { header: "Method", key: "Method", width: 18 },
@@ -489,14 +501,18 @@ export async function exportPayments(requester: Requester, filters: ListPayments
         { header: "Reference", key: "Reference", width: 30 }
     ];
 
-    const exportRows = rows.map((r) => ({
-        PaymentNumber: r.payment.paymentNumber,
-        Date: format(r.payment.createdAt, "yyyy-MM-dd"),
-        Amount: r.payment.amount,
-        Method: r.payment.method,
-        Status: r.payment.status,
-        Reference: r.payment.providerReference
-    }));
+    const exportRows = rows.map((r) => {
+        const tenant = tenants.get(r.payment.tenantId);
+        return {
+            PaymentNumber: r.payment.paymentNumber,
+            Tenant: tenant ? `${tenant.firstName} ${tenant.lastName}` : r.payment.tenantId,
+            Date: format(r.payment.createdAt, "yyyy-MM-dd"),
+            Amount: r.payment.amount,
+            Method: r.payment.method,
+            Status: r.payment.status,
+            Reference: r.payment.providerReference
+        };
+    });
 
     return buildExcelBuffer("Payments", columns, exportRows);
 }

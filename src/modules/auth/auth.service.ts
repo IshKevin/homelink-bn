@@ -272,10 +272,28 @@ export async function resetPassword(rawToken: string, newPassword: string) {
     }
 
     const passwordHash = await hashPassword(newPassword);
-    await db.update(users).set({ passwordHash }).where(eq(users.id, stored.userId));
+    await db.update(users).set({ passwordHash, mustChangePassword: false }).where(eq(users.id, stored.userId));
     await db.update(passwordResetTokens).set({ usedAt: new Date() }).where(eq(passwordResetTokens.id, stored.id));
     await db
         .update(refreshTokens)
         .set({ revokedAt: new Date() })
         .where(and(eq(refreshTokens.userId, stored.userId), isNull(refreshTokens.revokedAt)));
+}
+
+export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!user || !(await comparePassword(currentPassword, user.passwordHash))) {
+        throw AppError.unauthorized("Current password is incorrect");
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    await db.update(users).set({ passwordHash, mustChangePassword: false }).where(eq(users.id, userId));
+
+    // Every other session gets logged out on a password change — this one's
+    // access token stays valid until it naturally expires, matching
+    // resetPassword's behavior.
+    await db
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
 }

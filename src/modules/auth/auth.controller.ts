@@ -41,3 +41,8 @@ export async function resetPasswordHandler(req: Request, res: Response) {
     await authService.resetPassword(req.body.token, req.body.newPassword);
     return sendSuccess(res, { message: "Password reset successfully" });
 }
+
+export async function changePasswordHandler(req: Request, res: Response) {
+    await authService.changePassword(req.user!.id, req.body.currentPassword, req.body.newPassword);
+    return sendSuccess(res, { message: "Password changed successfully" });
+}

@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
-import { createUser } from "../../../../tests/helpers/factories";
+import { createAuthedUser, createUser } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
-import { refreshTokens } from "../../../database/schema";
+import { refreshTokens, users } from "../../../database/schema";
 import * as emailService from "../../../services/email.service";
 
 jest.mock("../../../services/email.service", () => ({
@@ -197,6 +197,44 @@ describe("Auth module", () => {
                 .post("/api/v1/auth/reset-password")
                 .send({ token: "not-a-real-token", newPassword: "NewPassword1!" });
             expect(res.status).toBe(400);
+        });
+    });
+
+    describe("POST /api/v1/auth/change-password", () => {
+        it("changes the password when currentPassword is correct, and clears mustChangePassword", async () => {
+            const { user, password, accessToken } = await createAuthedUser({});
+            await db.update(users).set({ mustChangePassword: true }).where(eq(users.id, user.id));
+
+            const res = await testRequest()
+                .post("/api/v1/auth/change-password")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ currentPassword: password, newPassword: "BrandNewPassword1!" });
+            expect(res.status).toBe(200);
+
+            const [updated] = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
+            expect(updated!.mustChangePassword).toBe(false);
+
+            const loginRes = await testRequest()
+                .post("/api/v1/auth/login")
+                .send({ email: user.email, password: "BrandNewPassword1!" });
+            expect(loginRes.status).toBe(200);
+        });
+
+        it("rejects an incorrect current password", async () => {
+            const { accessToken } = await createAuthedUser({});
+
+            const res = await testRequest()
+                .post("/api/v1/auth/change-password")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ currentPassword: "WrongPassword1!", newPassword: "BrandNewPassword1!" });
+            expect(res.status).toBe(401);
+        });
+
+        it("requires authentication", async () => {
+            const res = await testRequest()
+                .post("/api/v1/auth/change-password")
+                .send({ currentPassword: "x", newPassword: "BrandNewPassword1!" });
+            expect(res.status).toBe(401);
         });
     });
 });

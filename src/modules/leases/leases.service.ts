@@ -13,7 +13,8 @@ import {
 } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { generateRawToken, hashToken } from "../../common/utils/jwt.util";
-import { hashPassword } from "../../common/utils/password.util";
+import { hashPassword, generateTempPassword } from "../../common/utils/password.util";
+import { getTenantSummaries, getTenantSummary } from "../../common/utils/tenantSummary.util";
 import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
 import { renderHtmlToPdf } from "../../services/pdf.service";
 import { recordAction } from "../../services/audit.service";
@@ -181,6 +182,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
     // codebase — the risk of a partial multi-step write is real here in a
     // way it usually isn't for this app's simpler single-insert operations).
     let rawPasswordResetToken: string | undefined;
+    let temporaryPassword: string | undefined;
     const { lease, tenant } = await db.transaction(async (tx) => {
         const [freshUnit] = await tx.select().from(propertyUnits).where(eq(propertyUnits.id, unit.id)).limit(1);
         if (!freshUnit || freshUnit.status !== "available") {
@@ -194,7 +196,12 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
                 throw AppError.conflict("An account with this email already exists");
             }
 
-            const passwordHash = await hashPassword(generateRawToken());
+            // A landlord-created tenant often can't check email reliably, so
+            // this is returned once (below, outside the transaction) for the
+            // landlord to relay directly — paired with mustChangePassword so
+            // the tenant is still forced to pick their own on first login.
+            temporaryPassword = generateTempPassword();
+            const passwordHash = await hashPassword(temporaryPassword);
             const [created] = await tx
                 .insert(users)
                 .values({
@@ -204,7 +211,8 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
                     lastName: input.newTenant.lastName,
                     phone: input.newTenant.phone,
                     role: "tenant",
-                    isApproved: true
+                    isApproved: true,
+                    mustChangePassword: true
                 })
                 .returning();
             if (!created) throw AppError.internal("Failed to create tenant");
@@ -276,7 +284,14 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
         sendEmail: true
     });
 
-    return lease;
+    const tenantSummary = {
+        id: tenant.id,
+        firstName: tenant.firstName,
+        lastName: tenant.lastName,
+        email: tenant.email,
+        phone: tenant.phone
+    };
+    return { ...lease, tenant: tenantSummary, temporaryPassword };
 }
 
 export async function listLeases(
@@ -287,6 +302,9 @@ export async function listLeases(
     const conditions = [];
     if (filters.status) conditions.push(eq(leases.status, filters.status));
     if (filters.propertyId) conditions.push(eq(leases.propertyId, filters.propertyId));
+
+    let rows: (typeof leases.$inferSelect)[];
+    let total: number;
 
     if (requester.role === "agent") {
         const where = and(eq(properties.agentId, requester.id), ...conditions);
@@ -306,36 +324,39 @@ export async function listLeases(
             .limit(pagination.limit)
             .offset(pagination.offset);
 
-        return { rows: joined.map((r) => r.lease), total: countRow?.count ?? 0 };
+        rows = joined.map((r) => r.lease);
+        total = countRow?.count ?? 0;
+    } else {
+        if (requester.role === "tenant") {
+            conditions.push(eq(leases.tenantId, requester.id));
+        } else if (requester.role === "owner") {
+            conditions.push(eq(leases.ownerId, requester.id));
+        } else if (requester.role === "house_manager") {
+            conditions.push(eq(leases.ownerId, await resolveEffectiveOwnerId(requester)));
+        }
+
+        const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+        const [countRow] = await db.select({ count: sql<number>`count(*)::int` }).from(leases).where(where);
+
+        rows = await db
+            .select()
+            .from(leases)
+            .where(where)
+            .orderBy(desc(leases.createdAt))
+            .limit(pagination.limit)
+            .offset(pagination.offset);
+        total = countRow?.count ?? 0;
     }
 
-    if (requester.role === "tenant") {
-        conditions.push(eq(leases.tenantId, requester.id));
-    } else if (requester.role === "owner") {
-        conditions.push(eq(leases.ownerId, requester.id));
-    } else if (requester.role === "house_manager") {
-        conditions.push(eq(leases.ownerId, await resolveEffectiveOwnerId(requester)));
-    }
-
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
-
-    const [countRow] = await db.select({ count: sql<number>`count(*)::int` }).from(leases).where(where);
-
-    const rows = await db
-        .select()
-        .from(leases)
-        .where(where)
-        .orderBy(desc(leases.createdAt))
-        .limit(pagination.limit)
-        .offset(pagination.offset);
-
-    return { rows, total: countRow?.count ?? 0 };
+    const tenants = await getTenantSummaries(rows.map((r) => r.tenantId));
+    return { rows: rows.map((r) => ({ ...r, tenant: tenants.get(r.tenantId) })), total };
 }
 
 export async function getLeaseById(leaseId: string, requester: Requester) {
     const lease = await getLeaseOrThrow(leaseId);
     await assertLeaseAccess(lease, requester);
-    return lease;
+    return { ...lease, tenant: await getTenantSummary(lease.tenantId) };
 }
 
 export async function signLease(leaseId: string, requester: Requester) {

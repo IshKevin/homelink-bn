@@ -208,6 +208,12 @@ variable "api_subdomain" {
   default     = "api"
 }
 
+variable "additional_cors_origins" {
+  description = "Extra origins appended to the API's CORS allow-list alongside the frontend's own public hostname — e.g. [\"http://localhost:3000\"] so a locally-run frontend can call the deployed API directly during development."
+  type        = list(string)
+  default     = []
+}
+
 # ---------------------------------------------------------------------------
 # Observability
 # ---------------------------------------------------------------------------

@@ -56,7 +56,7 @@ router.use(authenticate);
  *         newTenant:
  *           type: object
  *           required: [email, firstName, lastName, phone]
- *           description: Registers a brand-new tenant account and assigns them this unit in one step. They receive a 'set your password' email, same as an admin-created house owner.
+ *           description: Registers a brand-new tenant account and assigns them this unit in one step. They receive a 'set your password' email, and the response's temporaryPassword is returned once for the landlord to relay directly (e.g. via WhatsApp/SMS) — the tenant is forced to change it on first login (mustChangePassword).
  *           properties:
  *             email: { type: string, format: email }
  *             firstName: { type: string }
@@ -80,7 +80,7 @@ router.use(authenticate);
  *           schema: { $ref: '#/components/schemas/CreateLeaseInput' }
  *     responses:
  *       201:
- *         description: Lease created and pending signatures
+ *         description: "Lease created and pending signatures. Each lease/list response also embeds a `tenant` summary ({id, firstName, lastName, email, phone}) — and, only when newTenant was used, a one-time `temporaryPassword` string."
  *         content:
  *           application/json:
  *             schema:

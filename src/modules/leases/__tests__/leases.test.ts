@@ -122,8 +122,43 @@ describe("Leases module", () => {
             expect(createdTenant!.role).toBe("tenant");
             expect(res.body.data.tenantId).toBe(createdTenant!.id);
 
+            // Landlord gets a one-time temp password to relay directly, and
+            // the account is forced to change it on first login.
+            expect(typeof res.body.data.temporaryPassword).toBe("string");
+            expect(res.body.data.temporaryPassword.length).toBeGreaterThanOrEqual(10);
+            expect(createdTenant!.mustChangePassword).toBe(true);
+
+            expect(res.body.data.tenant).toMatchObject({
+                id: createdTenant!.id,
+                firstName: "New",
+                lastName: "Tenant",
+                email: "new-tenant@example.com"
+            });
+
             const [updatedUnit] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unit!.id)).limit(1);
             expect(updatedUnit!.status).toBe("occupied"); // occupied immediately on assignment, not only once signed
+        });
+
+        it("does not return a temporaryPassword when assigning an existing tenant", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: tenant } = await createAuthedUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id)).limit(1);
+
+            const res = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    unitId: unit!.id,
+                    tenantId: tenant.id,
+                    startDate: "2026-01-01",
+                    rentAmount: 800
+                });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.temporaryPassword).toBeUndefined();
+            expect(res.body.data.tenant).toMatchObject({ id: tenant.id });
         });
 
         it("does not let a second tenant be assigned to a unit that already has a pending (unsigned) lease", async () => {
@@ -339,6 +374,7 @@ describe("Leases module", () => {
             const res = await testRequest().get(`/api/v1/leases/${lease.id}`).set("Authorization", `Bearer ${tenantToken}`);
             expect(res.status).toBe(200);
             expect(res.body.data.id).toBe(lease.id);
+            expect(res.body.data.tenant).toMatchObject({ id: tenant.id, email: tenant.email });
 
             const { accessToken: otherTenantToken } = await createAuthedUser({ role: "tenant" });
             const forbiddenRes = await testRequest()
@@ -616,6 +652,24 @@ describe("Leases module", () => {
             expect(res.status).toBe(200);
             expect(res.body.data).toHaveLength(1);
             expect(res.body.data[0].id).toBe(leaseA.id);
+        });
+
+        it("embeds a tenant summary on each lease instead of a bare tenantId", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: tenant } = await createAuthedUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            await createLease({ propertyId: property.id, ownerId: owner.id, tenantId: tenant.id });
+
+            const res = await testRequest().get("/api/v1/leases").set("Authorization", `Bearer ${ownerToken}`);
+
+            expect(res.status).toBe(200);
+            expect(res.body.data[0].tenant).toMatchObject({
+                id: tenant.id,
+                firstName: tenant.firstName,
+                lastName: tenant.lastName,
+                email: tenant.email,
+                phone: tenant.phone
+            });
         });
     });
 });

@@ -169,7 +169,8 @@ router.get("/", validate(listPropertiesSchema), listPropertiesHandler);
  *         schema: { type: string }
  *       - in: query
  *         name: status
- *         schema: { type: string, enum: [available, occupied] }
+ *         description: Defaults to "available" — maintenance/inactive units are excluded from this search unless explicitly requested
+ *         schema: { type: string, enum: [available, occupied, maintenance, inactive] }
  *       - in: query
  *         name: propertyId
  *         schema: { type: string, format: uuid }
@@ -367,9 +368,13 @@ router.delete(
  *             required: [label, rentAmount]
  *             properties:
  *               label: { type: string }
+ *               floor: { type: integer }
+ *               unitType: { type: string, example: "1-bedroom" }
+ *               description: { type: string }
  *               bedrooms: { type: number }
  *               bathrooms: { type: number }
  *               rentAmount: { type: number }
+ *               deposit: { type: number }
  *     responses:
  *       201:
  *         description: Unit created
@@ -423,9 +428,11 @@ router.get("/:id/units", listUnitsHandler);
  *             properties:
  *               count: { type: integer, minimum: 1, maximum: 500 }
  *               floors: { type: integer, minimum: 1, maximum: 500, description: "If given, units are distributed evenly and labeled 'Floor N - Unit M'" }
+ *               unitType: { type: string, example: "1-bedroom" }
  *               bedrooms: { type: number }
  *               bathrooms: { type: number }
  *               rentAmount: { type: number }
+ *               deposit: { type: number }
  *     responses:
  *       201:
  *         description: Units created
@@ -539,7 +546,20 @@ router.post(
  *         application/json:
  *           schema:
  *             type: object
- *             description: Any subset of label, bedrooms, bathrooms, rentAmount
+ *             description: Any subset of label, floor, unitType, description, bedrooms, bathrooms, rentAmount, deposit, status
+ *             properties:
+ *               label: { type: string }
+ *               floor: { type: integer }
+ *               unitType: { type: string }
+ *               description: { type: string }
+ *               bedrooms: { type: number }
+ *               bathrooms: { type: number }
+ *               rentAmount: { type: number }
+ *               deposit: { type: number }
+ *               status:
+ *                 type: string
+ *                 enum: [available, maintenance, inactive]
+ *                 description: "occupied is set only by lease assignment/vacancy, never directly; rejected if the unit currently has an active lease"
  *     responses:
  *       200:
  *         description: Unit updated

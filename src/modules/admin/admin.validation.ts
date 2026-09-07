@@ -59,6 +59,14 @@ export const listAuditLogsSchema = {
     })
 };
 
+export const listSessionsSchema = {
+    query: z.object({
+        userId: z.string().uuid().optional(),
+        page: z.coerce.number().int().positive().optional(),
+        limit: z.coerce.number().int().positive().optional()
+    })
+};
+
 export const createHouseOwnerSchema = {
     body: z.object({
         email: z.string().email().max(255),

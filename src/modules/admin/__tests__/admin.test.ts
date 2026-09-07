@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
 import { createAuthedUser, createLease, createProperty, createUser } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
-import { identityVerifications, users } from "../../../database/schema";
+import { identityVerifications, refreshTokens, users } from "../../../database/schema";
 import * as emailService from "../../../services/email.service";
 
 jest.mock("../../../services/email.service", () => ({
@@ -256,12 +256,98 @@ describe("Admin module", () => {
                 .set("Authorization", `Bearer ${adminToken}`);
 
             expect(res.status).toBe(200);
-            expect(
-                res.body.data.some(
-                    (log: { action: string; entity: string; entityId: string }) =>
-                        log.action === "admin.user.status_update" && log.entity === "user" && log.entityId === tenant.id
-                )
-            ).toBe(true);
+            const entry = res.body.data.find(
+                (log: { action: string; entity: string; entityId: string }) =>
+                    log.action === "admin.user.status_update" && log.entity === "user" && log.entityId === tenant.id
+            );
+            expect(entry).toBeDefined();
+            expect(entry.actor).toBeDefined();
+            expect(typeof entry.actor.email).toBe("string");
+        });
+    });
+
+    describe("GET /api/v1/admin/sessions", () => {
+        it("lists only active sessions, with parsed device info and no raw user-agent exposed", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: tenant } = await createUser({ role: "tenant" });
+
+            const [activeSession] = await db
+                .insert(refreshTokens)
+                .values({
+                    userId: tenant.id,
+                    tokenHash: "active-hash",
+                    ipAddress: "41.186.1.2",
+                    userAgent:
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                    lastUsedAt: new Date(),
+                    expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+                })
+                .returning();
+
+            await db.insert(refreshTokens).values({
+                userId: tenant.id,
+                tokenHash: "expired-hash",
+                lastUsedAt: new Date(),
+                expiresAt: new Date(Date.now() - 60 * 60 * 1000)
+            });
+            await db.insert(refreshTokens).values({
+                userId: tenant.id,
+                tokenHash: "revoked-hash",
+                lastUsedAt: new Date(),
+                expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+                revokedAt: new Date()
+            });
+
+            const res = await testRequest().get("/api/v1/admin/sessions").set("Authorization", `Bearer ${adminToken}`);
+
+            expect(res.status).toBe(200);
+            const row = res.body.data.find((s: { id: string }) => s.id === activeSession!.id);
+            expect(row).toBeDefined();
+            expect(row.userEmail).toBe(tenant.email);
+            expect(row.deviceType).toBe("desktop");
+            expect(row.browser).toBe("Chrome");
+            expect(row.os).toBe("Windows");
+            expect(row.ipAddress).toBe("41.186.1.2");
+            expect(row.userAgent).toBeUndefined();
+
+            expect(res.body.data.some((s: { id: string }) => s.id !== activeSession!.id)).toBe(false);
+        });
+    });
+
+    describe("DELETE /api/v1/admin/sessions/:id", () => {
+        it("revokes an active session so it drops out of the active list", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: tenant } = await createUser({ role: "tenant" });
+
+            const [session] = await db
+                .insert(refreshTokens)
+                .values({
+                    userId: tenant.id,
+                    tokenHash: "to-revoke-hash",
+                    lastUsedAt: new Date(),
+                    expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+                })
+                .returning();
+
+            const res = await testRequest()
+                .delete(`/api/v1/admin/sessions/${session!.id}`)
+                .set("Authorization", `Bearer ${adminToken}`);
+            expect(res.status).toBe(200);
+
+            const [updated] = await db.select().from(refreshTokens).where(eq(refreshTokens.id, session!.id)).limit(1);
+            expect(updated!.revokedAt).not.toBeNull();
+
+            const listRes = await testRequest().get("/api/v1/admin/sessions").set("Authorization", `Bearer ${adminToken}`);
+            expect(listRes.body.data.some((s: { id: string }) => s.id === session!.id)).toBe(false);
+        });
+
+        it("404s for a session that's already revoked or doesn't exist", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+
+            const res = await testRequest()
+                .delete("/api/v1/admin/sessions/00000000-0000-0000-0000-000000000000")
+                .set("Authorization", `Bearer ${adminToken}`);
+            expect(res.status).toBe(404);
         });
     });
 

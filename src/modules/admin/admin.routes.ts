@@ -8,6 +8,7 @@ import {
     deactivatePropertySchema,
     listAuditLogsSchema,
     listIdentityVerificationsSchema,
+    listSessionsSchema,
     listSuspensionRequestsSchema,
     listUsersSchema,
     rejectIdentityVerificationSchema,
@@ -26,11 +27,13 @@ import {
     getUserHandler,
     listAuditLogsHandler,
     listIdentityVerificationsHandler,
+    listSessionsHandler,
     listSuspensionRequestsHandler,
     listUsersHandler,
     reactivatePropertyHandler,
     rejectIdentityVerificationHandler,
     rejectSuspensionRequestHandler,
+    revokeSessionHandler,
     updateUserRoleHandler,
     updateUserStatusHandler,
     upsertSettingHandler
@@ -442,6 +445,59 @@ router.put("/settings/:key", validate(upsertSettingSchema), upsertSettingHandler
  *               $ref: '#/components/schemas/PaginatedResponse'
  */
 router.get("/audit-logs", validate(listAuditLogsSchema), listAuditLogsHandler);
+
+/**
+ * @openapi
+ * /admin/sessions:
+ *   get:
+ *     tags: [Admin]
+ *     summary: List currently active sessions platform-wide (admin only) — who's logged in, from what device/IP
+ *     parameters:
+ *       - in: query
+ *         name: userId
+ *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Paginated list of active sessions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/PaginatedResponse'
+ */
+router.get("/sessions", validate(listSessionsSchema), listSessionsHandler);
+
+/**
+ * @openapi
+ * /admin/sessions/{id}:
+ *   delete:
+ *     tags: [Admin]
+ *     summary: Force-revoke a specific active session (admin only) — logs that device out immediately
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Session revoked
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       404:
+ *         description: Active session not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.delete("/sessions/:id", revokeSessionHandler);
 
 /**
  * @openapi

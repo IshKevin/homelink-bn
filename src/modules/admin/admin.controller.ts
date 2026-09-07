@@ -103,6 +103,20 @@ export async function listAuditLogsHandler(req: Request, res: Response) {
     return sendSuccess(res, { data: rows, meta: buildPaginationMeta(page, limit, total) });
 }
 
+export async function listSessionsHandler(req: Request, res: Response) {
+    const { page, limit, offset } = getPagination(req);
+    const query = req.query as { userId?: string };
+
+    const { rows, total } = await adminService.listActiveSessions({ userId: query.userId }, { limit, offset });
+
+    return sendSuccess(res, { data: rows, meta: buildPaginationMeta(page, limit, total) });
+}
+
+export async function revokeSessionHandler(req: Request, res: Response) {
+    await adminService.revokeSession(req.params["id"] as string, req.user!);
+    return sendSuccess(res, { message: "Session revoked" });
+}
+
 export async function createHouseOwnerHandler(req: Request, res: Response) {
     const owner = await adminService.createHouseOwner(req.user!.id, req.body);
     return sendSuccess(res, { statusCode: 201, message: "House owner created", data: owner });

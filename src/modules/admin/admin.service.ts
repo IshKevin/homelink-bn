@@ -1,5 +1,5 @@
 import { addHours } from "date-fns";
-import { and, count, desc, eq, ilike, or } from "drizzle-orm";
+import { and, count, desc, eq, gt, ilike, isNull, or } from "drizzle-orm";
 import { db } from "../../database";
 import {
     auditLogs,
@@ -7,6 +7,7 @@ import {
     passwordResetTokens,
     platformSettings,
     properties,
+    refreshTokens,
     suspensionRequests,
     users
 } from "../../database/schema";
@@ -19,6 +20,8 @@ import { sendMail } from "../../services/email.service";
 import { setPasswordTemplate } from "../../services/email.templates";
 import { env } from "../../config/env";
 import { releaseHeldPayouts } from "../payments/payouts.service";
+import { getTenantSummaries } from "../../common/utils/tenantSummary.util";
+import { parseDeviceLabels } from "../../common/utils/userAgent.util";
 
 type UserRow = typeof users.$inferSelect;
 type IdentityVerificationRow = typeof identityVerifications.$inferSelect;
@@ -402,7 +405,79 @@ export async function listAuditLogs(filters: ListAuditLogsFilters, pagination: {
         .limit(pagination.limit)
         .offset(pagination.offset);
 
-    return { rows, total: countRow?.count ?? 0 };
+    const actorIds = rows.map((r) => r.userId).filter((id): id is string => !!id);
+    const actors = await getTenantSummaries(actorIds);
+    const enriched = rows.map((r) => ({ ...r, actor: r.userId ? actors.get(r.userId) : undefined }));
+
+    return { rows: enriched, total: countRow?.count ?? 0 };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Active sessions — platform monitoring an admin needs day to day (who's     */
+/* logged in, from what device/IP, with the ability to force a logout) that   */
+/* doesn't belong in Grafana: this is per-record, actionable detail, not an   */
+/* aggregate metric.                                                          */
+/* -------------------------------------------------------------------------- */
+
+export interface ListActiveSessionsFilters {
+    userId?: string | undefined;
+}
+
+export async function listActiveSessions(
+    filters: ListActiveSessionsFilters,
+    pagination: { limit: number; offset: number }
+) {
+    const conditions = [isNull(refreshTokens.revokedAt), gt(refreshTokens.expiresAt, new Date())];
+    if (filters.userId) conditions.push(eq(refreshTokens.userId, filters.userId));
+    const where = and(...conditions);
+
+    const [countRow] = await db.select({ count: count() }).from(refreshTokens).where(where);
+
+    const rows = await db
+        .select({ session: refreshTokens, user: users })
+        .from(refreshTokens)
+        .innerJoin(users, eq(refreshTokens.userId, users.id))
+        .where(where)
+        .orderBy(desc(refreshTokens.lastUsedAt))
+        .limit(pagination.limit)
+        .offset(pagination.offset);
+
+    const enriched = rows.map((r) => {
+        const { deviceType, browser, os } = parseDeviceLabels(r.session.userAgent);
+        return {
+            id: r.session.id,
+            userId: r.user.id,
+            userName: `${r.user.firstName} ${r.user.lastName}`,
+            userEmail: r.user.email,
+            userRole: r.user.role,
+            ipAddress: r.session.ipAddress,
+            deviceType,
+            browser,
+            os,
+            lastUsedAt: r.session.lastUsedAt,
+            createdAt: r.session.createdAt,
+            expiresAt: r.session.expiresAt
+        };
+    });
+
+    return { rows: enriched, total: countRow?.count ?? 0 };
+}
+
+export async function revokeSession(sessionId: string, admin: { id: string }): Promise<void> {
+    const [session] = await db.select().from(refreshTokens).where(eq(refreshTokens.id, sessionId)).limit(1);
+    if (!session || session.revokedAt) {
+        throw AppError.notFound("Active session not found");
+    }
+
+    await db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.id, sessionId));
+
+    await recordAction({
+        userId: admin.id,
+        action: "admin.session.revoke",
+        entity: "refresh_token",
+        entityId: sessionId,
+        metadata: { revokedUserId: session.userId }
+    });
 }
 
 export interface CreateHouseOwnerInput {

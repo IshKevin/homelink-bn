@@ -109,39 +109,6 @@ export async function updateUserStatus(adminId: string, userId: string, isActive
     return toPublicUser(updated);
 }
 
-// superadmin/house_manager are deliberately not settable here: superadmin is
-// too privileged to hand out from a generic role dropdown, and house_manager
-// assignment already goes through its own dedicated flow (manager_assignments
-// via the IAM invite system), not a bare role flip. Kept in sync with
-// updateUserRoleSchema's enum in admin.validation.ts.
-export type AssignableRole = "tenant" | "owner" | "agent" | "admin";
-
-export async function updateUserRole(adminId: string, userId: string, role: AssignableRole) {
-    await getUserOrThrow(userId);
-
-    const [updated] = await db.update(users).set({ role }).where(eq(users.id, userId)).returning();
-    if (!updated) throw AppError.internal("Failed to update user role");
-
-    await recordAction({
-        userId: adminId,
-        action: "admin.user.role_update",
-        entity: "user",
-        entityId: userId,
-        metadata: { role }
-    });
-
-    await notify({
-        userId,
-        type: "account.role_changed",
-        title: "Account role updated",
-        message: `Your account role has been changed to ${role} by an administrator.`,
-        metadata: { role },
-        sendEmail: true
-    });
-
-    return toPublicUser(updated);
-}
-
 export async function approveAgent(adminId: string, userId: string) {
     const user = await getUserOrThrow(userId);
 
@@ -168,6 +135,57 @@ export async function approveAgent(adminId: string, userId: string) {
         type: "agent.approved",
         title: "Agent account approved",
         message: "Your agent account has been approved. You can now start managing properties.",
+        sendEmail: true
+    });
+
+    return toPublicUser(updated);
+}
+
+export async function updateUserRole(
+    adminId: string,
+    requesterRole: UserRow["role"],
+    userId: string,
+    role: UserRow["role"]
+) {
+    const user = await getUserOrThrow(userId);
+
+    // house_manager assignment already goes through its own dedicated flow
+    // (manager_assignments via the IAM invite system), not a bare role flip.
+    if (role === "house_manager") {
+        throw AppError.badRequest("house_manager is assigned through the IAM invite flow, not this endpoint");
+    }
+
+    // Granting admin-tier access, or changing the role of someone who already
+    // has it, is a superadmin-only action — a plain admin must not be able to
+    // promote themselves (or anyone else) to admin/superadmin, nor demote an
+    // existing admin/superadmin.
+    const touchesAdminTier =
+        role === "admin" || role === "superadmin" || user.role === "admin" || user.role === "superadmin";
+    if (touchesAdminTier && requesterRole !== "superadmin") {
+        throw AppError.forbidden("Only a superadmin can grant or change admin-tier access");
+    }
+
+    if (user.role === role) {
+        throw AppError.conflict(`User already has the role: ${role}`);
+    }
+
+    const [updated] = await db.update(users).set({ role }).where(eq(users.id, userId)).returning();
+    if (!updated) throw AppError.internal("Failed to update user role");
+
+    await recordAction({
+        userId: adminId,
+        action: "admin.user.role_update",
+        entity: "user",
+        entityId: userId,
+        metadata: { previousRole: user.role, newRole: role }
+    });
+
+    await notify({
+        userId,
+        type: "account.role_changed",
+        title: "Your role has been updated",
+        message: `An administrator has changed your platform role to: ${role}.`,
+        metadata: { newRole: role },
         sendEmail: true
     });
 

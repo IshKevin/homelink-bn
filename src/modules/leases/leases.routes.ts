@@ -9,6 +9,7 @@ import {
     createMoveRequestSchema,
     decideChangeRequestRejectSchema,
     inspectMoveRequestSchema,
+    leaseStatementQuerySchema,
     listLeasesSchema,
     renewalRequestSchema,
     terminationRequestSchema,
@@ -23,6 +24,7 @@ import {
     deleteLeaseDocumentHandler,
     getLeaseDocumentHandler,
     getLeaseHandler,
+    getLeaseStatementHandler,
     inspectMoveRequestHandler,
     listChangeRequestsHandler,
     listLeaseDocumentsHandler,
@@ -161,6 +163,48 @@ router.get("/", validate(listLeasesSchema), listLeasesHandler);
  *               $ref: '#/components/schemas/ApiError'
  */
 router.get("/:id", getLeaseHandler);
+
+/**
+ * @openapi
+ * /leases/{id}/statement:
+ *   get:
+ *     tags: [Leases]
+ *     summary: Get this lease's statement of account — a chronological ledger of invoices (debits) and successful payments (credits) with a running balance
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, example: "2026-01-01" }
+ *         description: Period start date (yyyy-MM-dd). Defaults to the lease's start date.
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, example: "2026-12-31" }
+ *         description: Period end date (yyyy-MM-dd). Defaults to today.
+ *       - in: query
+ *         name: format
+ *         schema: { type: string, enum: [json, pdf] }
+ *     responses:
+ *       200:
+ *         description: Statement of account (JSON, or a branded PDF when format=pdf)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       403:
+ *         description: You do not have permission to access this lease
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.get("/:id/statement", validate(leaseStatementQuerySchema), getLeaseStatementHandler);
 
 /**
  * @openapi

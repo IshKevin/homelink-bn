@@ -5,6 +5,8 @@ import { db } from "../../../database";
 import { refreshTokens } from "../../../database/schema";
 import * as emailService from "../../../services/email.service";
 
+import { env } from "../../../config/env";
+
 jest.mock("../../../services/email.service", () => ({
     sendMail: jest.fn().mockResolvedValue(undefined)
 }));
@@ -30,6 +32,14 @@ describe("Auth security", () => {
     });
 
     describe("New-device sign-in verification", () => {
+        beforeAll(() => {
+            env.enableOtp = true;
+        });
+
+        afterAll(() => {
+            env.enableOtp = false;
+        });
+
         it("requires an emailed OTP code when logging in from an unrecognized device, then completes login", async () => {
             const { user } = await createUser({ email: "newdevice@example.com", password: "Password123!" });
 

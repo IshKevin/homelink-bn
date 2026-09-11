@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
 import { createAuthedUser, createProperty, createUser } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
-import { properties, propertyUnits } from "../../../database/schema";
+import { leases, properties, propertyUnits } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";
 
 jest.mock("../../../services/storage.service", () => ({
@@ -386,6 +386,92 @@ describe("Properties module", () => {
                 .get(`/api/v1/properties/${property.id}/units`)
                 .set("Authorization", `Bearer ${tenantToken}`);
             expect(res.status).toBe(404);
+        });
+
+        it("deletes a unit that was never leased", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+
+            const createRes = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: "Unit 2B", rentAmount: 750 });
+
+            const deleteRes = await testRequest()
+                .delete(`/api/v1/properties/${property.id}/units/${createRes.body.data.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(deleteRes.status).toBe(200);
+
+            const listRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(listRes.body.data).toHaveLength(1);
+        });
+
+        it("forbids deleting an occupied unit", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+            await db.update(propertyUnits).set({ status: "occupied" }).where(eq(propertyUnits.id, unit!.id));
+
+            const res = await testRequest()
+                .delete(`/api/v1/properties/${property.id}/units/${unit!.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(res.status).toBe(409);
+        });
+
+        it("archives a unit with lease history instead of deleting it, keeping the lease record intact", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const { user: tenant } = await createAuthedUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+
+            const [lease] = await db
+                .insert(leases)
+                .values({
+                    propertyId: property.id,
+                    unitId: unit!.id,
+                    tenantId: tenant.id,
+                    ownerId: owner.id,
+                    startDate: "2026-01-01",
+                    endDate: "2026-06-01",
+                    rentAmount: "1000",
+                    status: "terminated",
+                    terminatedAt: new Date()
+                })
+                .returning();
+
+            const res = await testRequest()
+                .delete(`/api/v1/properties/${property.id}/units/${unit!.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(res.status).toBe(200);
+
+            const [archivedUnit] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unit!.id));
+            expect(archivedUnit?.deletedAt).not.toBeNull();
+
+            const [survivingLease] = await db.select().from(leases).where(eq(leases.id, lease!.id));
+            expect(survivingLease).toBeDefined();
+
+            const listRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(listRes.body.data).toHaveLength(0);
+        });
+
+        it("lets a landlord reuse a unit label after archiving the original unit", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+
+            await testRequest()
+                .delete(`/api/v1/properties/${property.id}/units/${unit!.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+
+            const res = await testRequest()
+                .post(`/api/v1/properties/${property.id}/units`)
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ label: unit!.label, rentAmount: 900 });
+            expect(res.status).toBe(201);
         });
     });
 

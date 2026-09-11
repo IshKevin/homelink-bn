@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../database";
 import { properties, propertyImages, propertyUnits, users } from "../../database/schema";
@@ -278,18 +278,24 @@ export async function getPropertyById(propertyId: string, requester: Requester) 
         throw AppError.notFound("Property not found");
     }
 
+    const activeUnits = property.units.filter((unit) => !unit.deletedAt);
+
     return {
         ...property,
-        totalUnits: property.units.length,
-        occupiedUnits: property.units.filter((unit) => unit.status === "occupied").length,
-        availableUnits: property.units.filter((unit) => unit.status === "available").length,
-        maintenanceUnits: property.units.filter((unit) => unit.status === "maintenance").length,
-        inactiveUnits: property.units.filter((unit) => unit.status === "inactive").length
+        units: activeUnits,
+        totalUnits: activeUnits.length,
+        occupiedUnits: activeUnits.filter((unit) => unit.status === "occupied").length,
+        availableUnits: activeUnits.filter((unit) => unit.status === "available").length,
+        maintenanceUnits: activeUnits.filter((unit) => unit.status === "maintenance").length,
+        inactiveUnits: activeUnits.filter((unit) => unit.status === "inactive").length
     };
 }
 
 export async function recomputePropertyStatus(propertyId: string): Promise<void> {
-    const units = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, propertyId));
+    const units = await db
+        .select()
+        .from(propertyUnits)
+        .where(and(eq(propertyUnits.propertyId, propertyId), isNull(propertyUnits.deletedAt)));
     const hasAvailableUnit = units.length === 0 || units.some((unit) => unit.status === "available");
 
     await db
@@ -300,18 +306,18 @@ export async function recomputePropertyStatus(propertyId: string): Promise<void>
 
 async function getUnitOrThrow(unitId: string): Promise<PropertyUnitRow> {
     const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unitId)).limit(1);
-    if (!unit) throw AppError.notFound("Unit not found");
+    if (!unit || unit.deletedAt) throw AppError.notFound("Unit not found");
     return unit;
 }
 
 /**
- * Unit numbers/labels must be unique within a property (a database
- * constraint backs this too — property_units_property_id_label_idx — this
- * is just what turns that into a clean 409 instead of a raw constraint
- * error surfacing to the client).
+ * Unit numbers/labels must be unique among a property's non-archived units
+ * (a database constraint backs this too — property_units_property_id_label_idx,
+ * scoped the same way — this is just what turns that into a clean 409
+ * instead of a raw constraint error surfacing to the client).
  */
 async function assertNoDuplicateLabel(propertyId: string, label: string, excludeUnitId?: string): Promise<void> {
-    const conditions = [eq(propertyUnits.propertyId, propertyId), eq(propertyUnits.label, label)];
+    const conditions = [eq(propertyUnits.propertyId, propertyId), eq(propertyUnits.label, label), isNull(propertyUnits.deletedAt)];
     const [existing] = await db.select({ id: propertyUnits.id }).from(propertyUnits).where(and(...conditions)).limit(1);
     if (existing && existing.id !== excludeUnitId) {
         throw AppError.conflict(`Unit number "${label}" already exists in this property`);
@@ -324,7 +330,7 @@ async function findDuplicateLabels(propertyId: string, labels: string[]): Promis
     const existingRows = await db
         .select({ label: propertyUnits.label })
         .from(propertyUnits)
-        .where(and(eq(propertyUnits.propertyId, propertyId), inArray(propertyUnits.label, labels)));
+        .where(and(eq(propertyUnits.propertyId, propertyId), inArray(propertyUnits.label, labels), isNull(propertyUnits.deletedAt)));
     return existingRows.map((r) => r.label);
 }
 
@@ -368,7 +374,11 @@ export async function listUnits(propertyId: string, requester: Requester) {
         throw AppError.notFound("Property not found");
     }
 
-    return db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, propertyId)).orderBy(desc(propertyUnits.createdAt));
+    return db
+        .select()
+        .from(propertyUnits)
+        .where(and(eq(propertyUnits.propertyId, propertyId), isNull(propertyUnits.deletedAt)))
+        .orderBy(desc(propertyUnits.createdAt));
 }
 
 export async function updateUnit(propertyId: string, unitId: string, requester: Requester, input: UpdateUnitInput) {
@@ -408,6 +418,32 @@ export async function updateUnit(propertyId: string, unitId: string, requester: 
     await recordAction({ userId: requester.id, action: "property.unit.update", entity: "property", entityId: propertyId, metadata: { unitId } });
 
     return updated;
+}
+
+/**
+ * Deletion is a soft-delete (deletedAt), never a real row delete — a unit
+ * can have lease/invoice/payment history hanging off it (leases.unitId), and
+ * a hard delete would either cascade that history away or fail outright.
+ * Archived units drop out of listUnits/listAvailableUnits/property counts,
+ * but stay in the database exactly like a terminated lease does.
+ */
+export async function deleteUnit(propertyId: string, unitId: string, requester: Requester): Promise<void> {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+
+    await assertPropertyWriteAccess(propertyRow, requester);
+
+    const unit = await getUnitOrThrow(unitId);
+    if (unit.propertyId !== propertyId) throw AppError.notFound("Unit not found");
+
+    if (unit.status === "occupied") {
+        throw AppError.conflict("This unit currently has an active tenant — end that lease before deleting it");
+    }
+
+    await db.update(propertyUnits).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(propertyUnits.id, unitId));
+
+    await recomputePropertyStatus(propertyId);
+    await recordAction({ userId: requester.id, action: "property.unit.delete", entity: "property", entityId: propertyId, metadata: { unitId } });
 }
 
 /**
@@ -658,7 +694,7 @@ export async function importUnitsFromExcel(propertyId: string, requester: Reques
  * so Express doesn't treat "units" as a property id.
  */
 export async function listAvailableUnits(requester: Requester, filters: ListAvailableUnitsFilters) {
-    const conditions = [eq(propertyUnits.status, filters.status ?? "available")];
+    const conditions = [eq(propertyUnits.status, filters.status ?? "available"), isNull(propertyUnits.deletedAt)];
     if (filters.propertyId) conditions.push(eq(propertyUnits.propertyId, filters.propertyId));
     if (filters.search) {
         const term = `%${filters.search}%`;

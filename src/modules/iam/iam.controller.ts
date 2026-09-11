@@ -13,6 +13,11 @@ export async function inviteTenantHandler(req: Request, res: Response) {
     return sendSuccess(res, { statusCode: 201, message: "Tenant invite sent", data: invite });
 }
 
+export async function inviteLandlordHandler(req: Request, res: Response) {
+    const invite = await iamService.inviteLandlord(req.user!, req.body.email);
+    return sendSuccess(res, { statusCode: 201, message: "Landlord invite sent", data: invite });
+}
+
 export async function listInvitesHandler(req: Request, res: Response) {
     const { limit, offset } = getPagination(req);
     const invitesList = await iamService.listInvites(req.user!, { limit, offset });

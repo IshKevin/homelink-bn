@@ -4,7 +4,7 @@ import { users } from "./users.schema";
 import { properties } from "./properties.schema";
 
 export const managerAssignmentStatusEnum = pgEnum("manager_assignment_status", ["active", "revoked"]);
-export const inviteRoleEnum = pgEnum("invite_role", ["house_manager", "tenant"]);
+export const inviteRoleEnum = pgEnum("invite_role", ["house_manager", "tenant", "owner"]);
 export const inviteStatusEnum = pgEnum("invite_status", ["pending", "accepted", "revoked", "expired"]);
 export const suspensionRequestStatusEnum = pgEnum("suspension_request_status", ["pending", "approved", "rejected"]);
 
@@ -33,9 +33,10 @@ export const invites = pgTable("invites", {
     invitedBy: uuid("invited_by")
         .notNull()
         .references(() => users.id),
-    ownerId: uuid("owner_id")
-        .notNull()
-        .references(() => users.id, { onDelete: "cascade" }),
+    // Null for a landlord invite (role "owner") — there is no existing owner
+    // org to attach it to; that's the point of the invite. Non-null for
+    // tenant/house_manager invites, which are always scoped to one owner.
+    ownerId: uuid("owner_id").references(() => users.id, { onDelete: "cascade" }),
     propertyId: uuid("property_id").references(() => properties.id, { onDelete: "set null" }),
     status: inviteStatusEnum("status").notNull().default("pending"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

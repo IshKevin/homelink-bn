@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
-import { createAuthedUser, createLease, createProperty } from "../../../../tests/helpers/factories";
+import { createAuthedUser, createInvoice, createLease, createPayment, createProperty } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
 import { properties, propertyUnits, users } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";
@@ -670,6 +670,78 @@ describe("Leases module", () => {
                 email: tenant.email,
                 phone: tenant.phone
             });
+        });
+    });
+
+    describe("GET /api/v1/leases/:id/statement", () => {
+        async function buildLeaseWithLedger() {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: tenant, accessToken: tenantToken } = await createAuthedUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id });
+            const lease = await createLease({
+                propertyId: property.id,
+                tenantId: tenant.id,
+                ownerId: owner.id,
+                startDate: "2026-01-01"
+            });
+
+            const invoiceJan = await createInvoice({ leaseId: lease.id, dueDate: "2026-01-05", amountDue: 1000 });
+            await createPayment({
+                invoiceId: invoiceJan.id,
+                tenantId: tenant.id,
+                amount: 1000,
+                paidAt: new Date("2026-01-06")
+            });
+            await createInvoice({ leaseId: lease.id, dueDate: "2026-02-05", amountDue: 1000 });
+
+            return { owner, ownerToken, tenant, tenantToken, lease };
+        }
+
+        it("returns a running-balance ledger visible to the tenant", async () => {
+            const { tenantToken, lease } = await buildLeaseWithLedger();
+
+            const res = await testRequest()
+                .get(`/api/v1/leases/${lease.id}/statement`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(res.status).toBe(200);
+            expect(res.body.data.rows).toHaveLength(3);
+            expect(res.body.data.rows[0].debit).toBe(1000);
+            expect(res.body.data.rows[0].balance).toBe(1000);
+            expect(res.body.data.rows[1].credit).toBe(1000);
+            expect(res.body.data.rows[1].balance).toBe(0);
+            expect(res.body.data.rows[2].debit).toBe(1000);
+            expect(res.body.data.rows[2].balance).toBe(1000);
+            expect(res.body.data.closingBalance).toBe(1000);
+        });
+
+        it("is also visible to the owner", async () => {
+            const { ownerToken, lease } = await buildLeaseWithLedger();
+
+            const res = await testRequest()
+                .get(`/api/v1/leases/${lease.id}/statement`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(res.status).toBe(200);
+            expect(res.body.data.closingBalance).toBe(1000);
+        });
+
+        it("forbids a tenant on a different lease from viewing this statement", async () => {
+            const { lease } = await buildLeaseWithLedger();
+            const { accessToken: otherTenantToken } = await createAuthedUser({ role: "tenant" });
+
+            const res = await testRequest()
+                .get(`/api/v1/leases/${lease.id}/statement`)
+                .set("Authorization", `Bearer ${otherTenantToken}`);
+            expect(res.status).toBe(403);
+        });
+
+        it("returns a PDF when format=pdf", async () => {
+            const { tenantToken, lease } = await buildLeaseWithLedger();
+
+            const res = await testRequest()
+                .get(`/api/v1/leases/${lease.id}/statement?format=pdf`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(res.status).toBe(200);
+            expect(res.headers["content-type"]).toBe("application/pdf");
         });
     });
 });

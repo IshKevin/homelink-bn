@@ -7,6 +7,6 @@ export default defineConfig({
     dialect: "postgresql",
     casing: "snake_case",
     dbCredentials: {
-        url: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/homelink"
+        url: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5433/homelink"
     }
 });

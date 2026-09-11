@@ -13,6 +13,12 @@ export const inviteTenantSchema = {
     })
 };
 
+export const inviteLandlordSchema = {
+    body: z.object({
+        email: z.string().email()
+    })
+};
+
 export const acceptInviteSchema = {
     body: z.object({
         token: z.string().min(1).max(255),

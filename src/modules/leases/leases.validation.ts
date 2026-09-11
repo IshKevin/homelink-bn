@@ -38,6 +38,14 @@ export const createLeaseSchema = {
         })
 };
 
+export const leaseStatementQuerySchema = {
+    query: z.object({
+        from: dateStringSchema.optional(),
+        to: dateStringSchema.optional(),
+        format: z.enum(["json", "pdf"]).optional()
+    })
+};
+
 export const renewalRequestSchema = {
     body: z
         .object({

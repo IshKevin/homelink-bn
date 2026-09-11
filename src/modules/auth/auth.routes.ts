@@ -27,7 +27,7 @@ const router = Router();
 router.use(authRateLimiter);
 
 /**
- * @openapi
+ * @swagger
  * components:
  *   schemas:
  *     RegisterInput:
@@ -73,7 +73,7 @@ router.use(authRateLimiter);
 router.post("/register", validate(registerSchema), registerHandler);
 
 /**
- * @openapi
+ * @swagger
  * /auth/login:
  *   post:
  *     tags: [Auth]
@@ -91,11 +91,7 @@ router.post("/register", validate(registerSchema), registerHandler);
  *               password: { type: string, format: password }
  *     responses:
  *       200:
- *         description: >
- *           Login successful, returning { user, accessToken, refreshToken } — unless the request
- *           comes from a device/IP not previously seen for this account, in which case no tokens
- *           are issued and the response is { requiresVerification: true, challengeId } instead;
- *           complete the sign-in via POST /auth/login/verify with the emailed code.
+ *         description: Login successful, returning { user, accessToken, refreshToken }.
  *         content:
  *           application/json:
  *             schema:
@@ -110,7 +106,7 @@ router.post("/register", validate(registerSchema), registerHandler);
 router.post("/login", validate(loginSchema), loginHandler);
 
 /**
- * @openapi
+ * @swagger
  * /auth/login/verify:
  *   post:
  *     tags: [Auth]
@@ -143,7 +139,7 @@ router.post("/login", validate(loginSchema), loginHandler);
 router.post("/login/verify", validate(verifyLoginChallengeSchema), verifyLoginChallengeHandler);
 
 /**
- * @openapi
+ * @swagger
  * /auth/refresh:
  *   post:
  *     tags: [Auth]
@@ -175,7 +171,7 @@ router.post("/login/verify", validate(verifyLoginChallengeSchema), verifyLoginCh
 router.post("/refresh", validate(refreshSchema), refreshHandler);
 
 /**
- * @openapi
+ * @swagger
  * /auth/logout:
  *   post:
  *     tags: [Auth]
@@ -201,7 +197,7 @@ router.post("/refresh", validate(refreshSchema), refreshHandler);
 router.post("/logout", validate(refreshSchema), logoutHandler);
 
 /**
- * @openapi
+ * @swagger
  * /auth/forgot-password:
  *   post:
  *     tags: [Auth]
@@ -227,7 +223,7 @@ router.post("/logout", validate(refreshSchema), logoutHandler);
 router.post("/forgot-password", validate(forgotPasswordSchema), forgotPasswordHandler);
 
 /**
- * @openapi
+ * @swagger
  * /auth/reset-password:
  *   post:
  *     tags: [Auth]

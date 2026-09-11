@@ -36,7 +36,12 @@ export async function updateUserStatusHandler(req: Request, res: Response) {
 }
 
 export async function updateUserRoleHandler(req: Request, res: Response) {
-    const user = await adminService.updateUserRole(req.user!.id, req.params["id"] as string, req.body.role);
+    const user = await adminService.updateUserRole(
+        req.user!.id,
+        req.user!.role,
+        req.params["id"] as string,
+        req.body.role
+    );
     return sendSuccess(res, { message: "User role updated", data: user });
 }
 

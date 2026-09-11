@@ -19,7 +19,7 @@ export const updateUserStatusSchema = {
 
 export const updateUserRoleSchema = {
     body: z.object({
-        role: z.enum(["tenant", "owner", "agent", "admin"])
+        role: z.enum(["tenant", "owner", "agent", "admin", "superadmin", "house_manager"])
     })
 };
 

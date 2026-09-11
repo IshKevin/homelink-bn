@@ -5,6 +5,7 @@ import { validate } from "../../common/middlewares/validate.middleware";
 import {
     acceptInviteSchema,
     createSuspensionRequestSchema,
+    inviteLandlordSchema,
     inviteManagerSchema,
     inviteTenantSchema,
     listInvitesSchema
@@ -12,6 +13,7 @@ import {
 import {
     acceptInviteHandler,
     createSuspensionRequestHandler,
+    inviteLandlordHandler,
     inviteManagerHandler,
     inviteTenantHandler,
     listInvitesHandler,
@@ -154,10 +156,41 @@ router.post("/tenants/invite", authorize("owner", "house_manager"), validate(inv
 
 /**
  * @openapi
+ * /iam/landlords/invite:
+ *   post:
+ *     tags: [IAM]
+ *     summary: Invite a landlord to join HomeLink (agent only; the agent's account must be approved)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string }
+ *     responses:
+ *       201:
+ *         description: Invite sent
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       403:
+ *         description: Not an agent, or the agent isn't approved yet
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.post("/landlords/invite", authorize("agent"), validate(inviteLandlordSchema), inviteLandlordHandler);
+
+/**
+ * @openapi
  * /iam/invites:
  *   get:
  *     tags: [IAM]
- *     summary: List invites created under the current owner (or the manager's linked owner)
+ *     summary: List invites created under the current owner (or the manager's linked owner), or an agent's own landlord invites
  *     parameters:
  *       - in: query
  *         name: page
@@ -173,7 +206,7 @@ router.post("/tenants/invite", authorize("owner", "house_manager"), validate(inv
  *             schema:
  *               $ref: '#/components/schemas/SuccessResponse'
  */
-router.get("/invites", authorize("owner", "house_manager"), validate(listInvitesSchema), listInvitesHandler);
+router.get("/invites", authorize("owner", "house_manager", "agent"), validate(listInvitesSchema), listInvitesHandler);
 
 /**
  * @openapi

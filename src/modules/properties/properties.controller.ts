@@ -84,6 +84,11 @@ export async function updateUnitHandler(req: Request, res: Response) {
     return sendSuccess(res, { message: "Unit updated", data: unit });
 }
 
+export async function deleteUnitHandler(req: Request, res: Response) {
+    await propertiesService.deleteUnit(req.params["id"] as string, req.params["unitId"] as string, req.user!);
+    return sendSuccess(res, { message: "Unit deleted" });
+}
+
 export async function generateUnitsHandler(req: Request, res: Response) {
     const units = await propertiesService.generateUnits(req.params["id"] as string, req.user!, req.body);
     return sendSuccess(res, { statusCode: 201, message: `${units.length} unit(s) created`, data: units });

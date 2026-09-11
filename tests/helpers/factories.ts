@@ -1,7 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { eq } from "drizzle-orm";
 import { db } from "../../src/database";
-import { invoices, leases, maintenanceRequests, properties, propertyUnits, users } from "../../src/database/schema";
+import { invoices, leases, maintenanceRequests, payments, properties, propertyUnits, users } from "../../src/database/schema";
 import { hashPassword } from "../../src/common/utils/password.util";
 import { signAccessToken } from "../../src/common/utils/jwt.util";
 import { nextDocumentNumber } from "../../src/common/utils/sequence.util";
@@ -201,6 +201,36 @@ export async function createInvoice(overrides: CreateInvoiceOverrides) {
 
     if (!invoice) throw new Error("Failed to create test invoice");
     return invoice;
+}
+
+export interface CreatePaymentOverrides {
+    invoiceId: string;
+    tenantId: string;
+    amount?: string | number;
+    method?: "mobile_money" | "bank_transfer" | "cash";
+    status?: "pending" | "success" | "failed";
+    paidAt?: Date | null;
+}
+
+export async function createPayment(overrides: CreatePaymentOverrides) {
+    const paymentNumber = await nextDocumentNumber("ACC-PAY");
+    const [payment] = await db
+        .insert(payments)
+        .values({
+            paymentNumber,
+            invoiceId: overrides.invoiceId,
+            tenantId: overrides.tenantId,
+            amount: overrides.amount !== undefined ? String(overrides.amount) : "1200.00",
+            method: overrides.method ?? "mobile_money",
+            provider: "test",
+            providerReference: faker.string.alphanumeric(10).toUpperCase(),
+            status: overrides.status ?? "success",
+            paidAt: overrides.status === "failed" ? undefined : (overrides.paidAt ?? new Date())
+        })
+        .returning();
+
+    if (!payment) throw new Error("Failed to create test payment");
+    return payment;
 }
 
 export interface CreateMaintenanceRequestOverrides {

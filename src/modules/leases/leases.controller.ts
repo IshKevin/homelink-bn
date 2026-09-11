@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { AppError } from "../../common/errors/AppError";
 import { sendSuccess } from "../../common/utils/response.util";
 import { buildPaginationMeta, getPagination } from "../../common/utils/pagination.util";
+import { renderHtmlToPdf } from "../../services/pdf.service";
 import * as leasesService from "./leases.service";
 
 export async function createLeaseHandler(req: Request, res: Response) {
@@ -35,6 +36,24 @@ export async function listLeasesHandler(req: Request, res: Response) {
 export async function getLeaseHandler(req: Request, res: Response) {
     const lease = await leasesService.getLeaseById(req.params["id"] as string, req.user!);
     return sendSuccess(res, { data: lease });
+}
+
+export async function getLeaseStatementHandler(req: Request, res: Response) {
+    const query = req.query as { from?: string; to?: string; format?: "json" | "pdf" };
+    const statement = await leasesService.getLeaseStatement(req.params["id"] as string, req.user!, {
+        from: query.from,
+        to: query.to
+    });
+
+    if (query.format === "pdf") {
+        const html = leasesService.buildLeaseStatementHtml(statement);
+        const buffer = await renderHtmlToPdf(html);
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="statement-${statement.periodFrom}-to-${statement.periodTo}.pdf"`);
+        return res.send(buffer);
+    }
+
+    return sendSuccess(res, { data: statement });
 }
 
 export async function signLeaseHandler(req: Request, res: Response) {

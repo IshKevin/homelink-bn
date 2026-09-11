@@ -91,15 +91,9 @@ describe("Admin module", () => {
             expect(updated?.role).toBe("owner");
         });
 
-        it("rejects superadmin and house_manager as not assignable through this endpoint", async () => {
+        it("rejects house_manager as not assignable through this endpoint", async () => {
             const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
             const { user: target } = await createUser({ role: "tenant" });
-
-            const superadminRes = await testRequest()
-                .patch(`/api/v1/admin/users/${target.id}/role`)
-                .set("Authorization", `Bearer ${adminToken}`)
-                .send({ role: "superadmin" });
-            expect(superadminRes.status).toBe(400);
 
             const managerRes = await testRequest()
                 .patch(`/api/v1/admin/users/${target.id}/role`)
@@ -445,6 +439,77 @@ describe("Admin module", () => {
 
             const [updatedUser] = await db.select().from(users).where(eq(users.id, target.id)).limit(1);
             expect(updatedUser?.isActive).toBe(true);
+        });
+    });
+
+    describe("PATCH /api/v1/admin/users/:id/role", () => {
+        it("lets a superadmin grant the admin role", async () => {
+            const { accessToken: superadminToken } = await createAuthedUser({ role: "superadmin" });
+            const { user: target } = await createUser({ role: "agent" });
+
+            const res = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${superadminToken}`)
+                .send({ role: "admin" });
+            expect(res.status).toBe(200);
+            expect(res.body.data.role).toBe("admin");
+        });
+
+        it("lets a superadmin grant the superadmin role", async () => {
+            const { accessToken: superadminToken } = await createAuthedUser({ role: "superadmin" });
+            const { user: target } = await createUser({ role: "admin" });
+
+            const res = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${superadminToken}`)
+                .send({ role: "superadmin" });
+            expect(res.status).toBe(200);
+            expect(res.body.data.role).toBe("superadmin");
+        });
+
+        it("lets a plain admin change an ordinary user's role", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: target } = await createUser({ role: "tenant" });
+
+            const res = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ role: "owner" });
+            expect(res.status).toBe(200);
+            expect(res.body.data.role).toBe("owner");
+        });
+
+        it("forbids a plain admin from granting the admin role", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: target } = await createUser({ role: "agent" });
+
+            const res = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ role: "admin" });
+            expect(res.status).toBe(403);
+        });
+
+        it("forbids a plain admin from granting the superadmin role", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: target } = await createUser({ role: "agent" });
+
+            const res = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ role: "superadmin" });
+            expect(res.status).toBe(403);
+        });
+
+        it("forbids a plain admin from changing an existing admin's role", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: target } = await createUser({ role: "admin" });
+
+            const res = await testRequest()
+                .patch(`/api/v1/admin/users/${target.id}/role`)
+                .set("Authorization", `Bearer ${adminToken}`)
+                .send({ role: "owner" });
+            expect(res.status).toBe(403);
         });
     });
 });

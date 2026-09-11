@@ -14,7 +14,7 @@ function extractToken(html: string): string {
 
 async function inviteAndAccept(
     ownerToken: string,
-    endpoint: "managers" | "tenants",
+    endpoint: "managers" | "tenants" | "landlords",
     email: string,
     extra: Record<string, unknown> = {}
 ) {
@@ -105,6 +105,61 @@ describe("IAM module", () => {
 
             const tenant = await inviteAndAccept(ownerToken, "tenants", "tenant-invite@example.com");
             expect(tenant.role).toBe("tenant");
+        });
+    });
+
+    describe("Landlord invite", () => {
+        it("lets an approved agent invite a landlord via link", async () => {
+            const { accessToken: agentToken } = await createAuthedUser({ role: "agent", isApproved: true });
+
+            const landlord = await inviteAndAccept(agentToken, "landlords", "landlord-invite@example.com");
+            expect(landlord.role).toBe("owner");
+
+            const loginRes = await testRequest()
+                .post("/api/v1/auth/login")
+                .send({ email: "landlord-invite@example.com", password: "Password123!" });
+            expect(loginRes.status).toBe(200);
+        });
+
+        it("forbids an unapproved agent from inviting a landlord", async () => {
+            const { accessToken: agentToken } = await createAuthedUser({ role: "agent", isApproved: false });
+
+            const res = await testRequest()
+                .post("/api/v1/iam/landlords/invite")
+                .set("Authorization", `Bearer ${agentToken}`)
+                .send({ email: "blocked-landlord@example.com" });
+            expect(res.status).toBe(403);
+        });
+
+        it("forbids a non-agent role from inviting a landlord", async () => {
+            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+
+            const res = await testRequest()
+                .post("/api/v1/iam/landlords/invite")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ email: "blocked-landlord-2@example.com" });
+            expect(res.status).toBe(403);
+        });
+
+        it("lists an agent's own landlord invites, scoped to that agent", async () => {
+            const { accessToken: agentToken } = await createAuthedUser({ role: "agent", isApproved: true });
+            const { accessToken: otherAgentToken } = await createAuthedUser({ role: "agent", isApproved: true });
+
+            await testRequest()
+                .post("/api/v1/iam/landlords/invite")
+                .set("Authorization", `Bearer ${agentToken}`)
+                .send({ email: "landlord-list@example.com" });
+            await testRequest()
+                .post("/api/v1/iam/landlords/invite")
+                .set("Authorization", `Bearer ${otherAgentToken}`)
+                .send({ email: "other-agent-landlord@example.com" });
+
+            const listRes = await testRequest()
+                .get("/api/v1/iam/invites")
+                .set("Authorization", `Bearer ${agentToken}`);
+            expect(listRes.status).toBe(200);
+            expect(listRes.body.data).toHaveLength(1);
+            expect(listRes.body.data[0].email).toBe("landlord-list@example.com");
         });
     });
 

@@ -14,4 +14,6 @@ export interface PaymentResult {
 export interface PaymentProvider {
     readonly name: string;
     initiate(input: InitiatePaymentInput): Promise<PaymentResult>;
+    /** Only implemented by providers whose initiate() can return "pending" (e.g. MtnMomoProvider). */
+    checkStatus?(providerReference: string): Promise<PaymentResult>;
 }

@@ -147,8 +147,8 @@ router.patch("/users/:id/status", validate(updateUserStatusSchema), updateUserSt
  * /admin/users/{id}/role:
  *   patch:
  *     tags: [Admin]
- *     summary: Change a user's role (admin only)
- *     description: superadmin and house_manager are not settable here — house_manager assignment goes through the IAM invite flow instead.
+ *     summary: Assign or change a user's role. Granting admin/superadmin, or changing the role of an existing admin/superadmin, requires the caller to be a superadmin.
+ *     description: house_manager is not settable here — that assignment goes through the IAM invite flow instead.
  *     parameters:
  *       - in: path
  *         name: id
@@ -162,7 +162,7 @@ router.patch("/users/:id/status", validate(updateUserStatusSchema), updateUserSt
  *             type: object
  *             required: [role]
  *             properties:
- *               role: { type: string, enum: [tenant, owner, agent, admin] }
+ *               role: { type: string, enum: [tenant, owner, agent, admin, superadmin, house_manager] }
  *     responses:
  *       200:
  *         description: User role updated
@@ -170,8 +170,26 @@ router.patch("/users/:id/status", validate(updateUserStatusSchema), updateUserSt
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: house_manager cannot be assigned through this endpoint
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ *       403:
+ *         description: A plain admin tried to touch admin-tier access (only a superadmin can)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
  *       404:
  *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ *       409:
+ *         description: User already has this role
  *         content:
  *           application/json:
  *             schema:

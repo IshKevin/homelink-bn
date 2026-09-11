@@ -23,7 +23,7 @@ function toPublicUser(user: typeof users.$inferSelect) {
 
 async function createInvite(
     inviter: Requester,
-    ownerId: string,
+    ownerId: string | undefined,
     email: string,
     role: InviteRow["role"],
     propertyId?: string
@@ -48,7 +48,7 @@ async function createInvite(
     if (!invite) throw AppError.internal("Failed to create invite");
 
     const link = `${env.appUrl}/join?token=${rawToken}`;
-    const roleLabel = role === "house_manager" ? "house manager" : "tenant";
+    const roleLabel = role === "house_manager" ? "house manager" : role === "owner" ? "landlord" : "tenant";
     await sendMail({
         to: email,
         subject: "You've been invited to HomeLink",
@@ -81,13 +81,34 @@ export async function inviteTenant(inviter: Requester, email: string, propertyId
     return createInvite(inviter, ownerId, email, "tenant", propertyId);
 }
 
+export async function inviteLandlord(inviter: Requester, email: string) {
+    if (inviter.role !== "agent") {
+        throw AppError.forbidden("Only an agent can invite a landlord");
+    }
+
+    const [agent] = await db.select().from(users).where(eq(users.id, inviter.id)).limit(1);
+    if (!agent || !agent.isApproved) {
+        throw AppError.forbidden("Your agent account must be approved by an administrator before you can invite landlords");
+    }
+
+    // No ownerId: this invite creates a brand-new owner, so there's no
+    // existing owner org to attach it to (unlike a tenant/manager invite).
+    return createInvite(inviter, undefined, email, "owner");
+}
+
 export async function listInvites(requester: Requester, pagination: { limit: number; offset: number }) {
-    const ownerId = await resolveEffectiveOwnerId(requester);
+    // Agent-sent (landlord) invites have no ownerId to key off — list by
+    // who sent them instead. Everyone else's invites are scoped to one
+    // owner's org, tenant/house_manager invites included.
+    const whereClause =
+        requester.role === "agent"
+            ? eq(invites.invitedBy, requester.id)
+            : eq(invites.ownerId, await resolveEffectiveOwnerId(requester));
 
     const rows = await db
         .select()
         .from(invites)
-        .where(eq(invites.ownerId, ownerId))
+        .where(whereClause)
         .orderBy(desc(invites.createdAt))
         .limit(pagination.limit)
         .offset(pagination.offset);
@@ -186,6 +207,9 @@ export async function acceptInvite(input: AcceptInviteInput) {
     if (!user) throw AppError.internal("Failed to create account");
 
     if (invite.role === "house_manager") {
+        // Always set by inviteManager — ownerId is only ever null for a
+        // landlord invite (role "owner"), which can't reach this branch.
+        if (!invite.ownerId) throw AppError.internal("House manager invite is missing its owner");
         await db.insert(managerAssignments).values({
             ownerId: invite.ownerId,
             managerId: user.id,

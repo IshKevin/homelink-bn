@@ -1,5 +1,5 @@
 import { boolean, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import { users } from "./users.schema";
 
 export const propertyTypeEnum = pgEnum("property_type", [
@@ -84,6 +84,12 @@ export const propertyUnits = pgTable(
         rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
         deposit: numeric("deposit", { precision: 12, scale: 2 }),
         status: unitStatusEnum("status").notNull().default("available"),
+        // Soft-delete only: a unit gets archived, never hard-deleted, once it
+        // could have lease/invoice/payment history hanging off it — deleting
+        // the row for real would either cascade-delete that history (via
+        // leases.unitId) or fail outright. Archived units are filtered out of
+        // every normal read (listUnits, listAvailableUnits, property counts).
+        deletedAt: timestamp("deleted_at", { withTimezone: true }),
         createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
         updatedAt: timestamp("updated_at", { withTimezone: true })
             .notNull()
@@ -93,8 +99,11 @@ export const propertyUnits = pgTable(
     (table) => [
         // Database-level backstop against duplicate unit numbers within the
         // same property — app-level validation checks this too (for a clean
-        // error message), but this is the actual guarantee.
-        uniqueIndex("property_units_property_id_label_idx").on(table.propertyId, table.label)
+        // error message), but this is the actual guarantee. Scoped to
+        // non-archived units so a label freed up by archiving can be reused.
+        uniqueIndex("property_units_property_id_label_idx")
+            .on(table.propertyId, table.label)
+            .where(sql`${table.deletedAt} is null`)
     ]
 );
 

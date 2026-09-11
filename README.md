@@ -60,7 +60,7 @@ Every module follows the same shape, so once you've read one (`src/modules/prope
 docker compose -f docker/docker-compose.yml up -d postgres redis minio mailpit
 ```
 
-This starts Postgres (`5432`), Redis (`6379`), MinIO (`9000` API / `9001` console), and Mailpit (`8025` UI / `1025` SMTP).
+This starts Postgres (`5433`), Redis (`6379`), MinIO (`9000` API / `9001` console), and Mailpit (`8025` UI / `1025` SMTP).
 
 ### 2. Configure environment
 

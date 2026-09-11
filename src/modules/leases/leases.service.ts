@@ -1,12 +1,14 @@
 import { addHours } from "date-fns";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../database";
 import {
+    invoices,
     leaseChangeRequests,
     leaseDocuments,
     leases,
     moveRequests,
     passwordResetTokens,
+    payments,
     properties,
     propertyUnits,
     users
@@ -359,6 +361,256 @@ export async function getLeaseById(leaseId: string, requester: Requester) {
     const lease = await getLeaseOrThrow(leaseId);
     await assertLeaseAccess(lease, requester);
     return { ...lease, tenant: await getTenantSummary(lease.tenantId) };
+}
+
+export interface LeaseStatementRow {
+    date: string;
+    reference: string;
+    remarks: string;
+    debit: number;
+    credit: number;
+    balance: number;
+}
+
+export interface LeaseStatement {
+    property: { title: string; addressLine: string; city: string };
+    unit: { label: string };
+    tenant: { firstName: string; lastName: string; email: string };
+    owner: { firstName: string; lastName: string };
+    periodFrom: string;
+    periodTo: string;
+    openingBalance: number;
+    rows: LeaseStatementRow[];
+    totalDebit: number;
+    totalCredit: number;
+    closingBalance: number;
+    generatedAt: string;
+}
+
+export async function getLeaseStatement(
+    leaseId: string,
+    requester: Requester,
+    params: { from: string | undefined; to: string | undefined }
+): Promise<LeaseStatement> {
+    const lease = await getLeaseOrThrow(leaseId);
+    await assertLeaseAccess(lease, requester);
+
+    const property = await getPropertyOrThrow(lease.propertyId);
+    const unit = await getUnitOrThrow(lease.unitId);
+    const [tenant] = await db.select().from(users).where(eq(users.id, lease.tenantId)).limit(1);
+    const [owner] = await db.select().from(users).where(eq(users.id, lease.ownerId)).limit(1);
+    if (!tenant || !owner) throw AppError.internal("Lease is missing its tenant or owner");
+
+    const leaseInvoices = await db.select().from(invoices).where(eq(invoices.leaseId, leaseId));
+    const invoiceIds = leaseInvoices.map((invoice) => invoice.id);
+    // Only payments that actually succeeded reduce the balance — pending or
+    // failed attempts never happened as far as the ledger is concerned.
+    const leasePayments = invoiceIds.length
+        ? await db
+              .select()
+              .from(payments)
+              .where(and(inArray(payments.invoiceId, invoiceIds), eq(payments.status, "success")))
+        : [];
+
+    type Entry = { date: Date; reference: string; remarks: string; debit: number; credit: number };
+    const entries: Entry[] = [
+        ...leaseInvoices.map(
+            (invoice): Entry => ({
+                date: new Date(invoice.dueDate),
+                reference: invoice.invoiceNumber,
+                remarks: `Rent invoice for ${periodLabel(invoice.period)}`,
+                debit: Number(invoice.amountDue),
+                credit: 0
+            })
+        ),
+        ...leasePayments.map(
+            (payment): Entry => ({
+                date: payment.paidAt ?? payment.createdAt,
+                reference: payment.paymentNumber,
+                remarks: `Payment via ${methodLabel(payment.method)}`,
+                debit: 0,
+                credit: Number(payment.amount)
+            })
+        )
+    ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    const from = params.from ? new Date(params.from) : new Date(lease.startDate);
+    const to = params.to ? new Date(params.to) : new Date();
+
+    let openingBalance = 0;
+    const rows: LeaseStatementRow[] = [];
+
+    for (const entry of entries) {
+        if (entry.date < from) {
+            openingBalance += entry.debit - entry.credit;
+            continue;
+        }
+        if (entry.date > to) continue;
+        const previousBalance = rows.length ? rows[rows.length - 1]!.balance : openingBalance;
+        rows.push({
+            date: entry.date.toISOString().slice(0, 10),
+            reference: entry.reference,
+            remarks: entry.remarks,
+            debit: entry.debit,
+            credit: entry.credit,
+            balance: previousBalance + entry.debit - entry.credit
+        });
+    }
+
+    const totalDebit = rows.reduce((sum, row) => sum + row.debit, 0);
+    const totalCredit = rows.reduce((sum, row) => sum + row.credit, 0);
+
+    return {
+        property: { title: property.title, addressLine: property.addressLine, city: property.city },
+        unit: { label: unit.label },
+        tenant: { firstName: tenant.firstName, lastName: tenant.lastName, email: tenant.email },
+        owner: { firstName: owner.firstName, lastName: owner.lastName },
+        periodFrom: from.toISOString().slice(0, 10),
+        periodTo: to.toISOString().slice(0, 10),
+        openingBalance,
+        rows,
+        totalDebit,
+        totalCredit,
+        closingBalance: openingBalance + totalDebit - totalCredit,
+        generatedAt: new Date().toISOString()
+    };
+}
+
+function formatStatementMoney(amount: number): string {
+    return amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatStatementDate(dateStr: string): string {
+    const [year, month, day] = dateStr.split("-");
+    return `${day}-${month}-${year}`;
+}
+
+/** "2026-08" -> "August 2026" */
+function periodLabel(period: string): string {
+    const [year, month] = period.split("-");
+    return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric"
+    });
+}
+
+function methodLabel(method: string): string {
+    return method
+        .split("_")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+}
+
+export function buildLeaseStatementHtml(statement: LeaseStatement): string {
+    const rowsHtml = statement.rows.length
+        ? statement.rows
+              .map(
+                  (row, i) => `
+                    <tr style="background:${i % 2 === 0 ? "#ffffff" : "#f8fafc"}">
+                        <td>${formatStatementDate(row.date)}</td>
+                        <td>${row.reference}</td>
+                        <td>${row.remarks}</td>
+                        <td class="num">${row.debit ? `RWF ${formatStatementMoney(row.debit)}` : ""}</td>
+                        <td class="num">${row.credit ? `RWF ${formatStatementMoney(row.credit)}` : ""}</td>
+                        <td class="num">RWF ${formatStatementMoney(row.balance)}</td>
+                    </tr>`
+              )
+              .join("")
+        : `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px;">No transactions in this period.</td></tr>`;
+
+    return `
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>Statement of Account</title>
+                <style>
+                    * { box-sizing: border-box; }
+                    body { font-family: Arial, Helvetica, sans-serif; padding: 32px; color: #0f172a; }
+                    .header { display: flex; justify-content: space-between; align-items: flex-start; }
+                    .brand { display: flex; align-items: center; gap: 10px; }
+                    .brand-name { font-size: 20px; font-weight: bold; color: #0a1628; line-height: 1.1; }
+                    .brand-sub { font-size: 10px; font-weight: 600; letter-spacing: 2px; color: #2563eb; }
+                    .title { text-align: right; }
+                    .title h1 { margin: 0; font-size: 22px; color: #0a1628; }
+                    .title p { margin: 4px 0 0; font-size: 12px; color: #64748b; }
+                    .meta { display: flex; justify-content: space-between; margin-top: 24px; padding: 14px 16px; background: #f8fafc; border-radius: 8px; font-size: 12px; }
+                    .meta b { color: #0a1628; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
+                    thead th { background: #0a1628; color: #fff; text-align: left; padding: 10px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+                    td { padding: 9px 8px; border-bottom: 1px solid #e2e8f0; }
+                    td:first-child, .num { white-space: nowrap; }
+                    .num { text-align: right; }
+                    tfoot td { border-top: 2px solid #0a1628; border-bottom: none; font-weight: bold; color: #0a1628; padding-top: 12px; }
+                    .footer { display: flex; justify-content: space-between; align-items: center; margin-top: 40px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; }
+                    .footer .powered { font-weight: bold; color: #0a1628; }
+                    .footer .powered span { color: #2563eb; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <div class="brand">
+                        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" />
+                        </svg>
+                        <div>
+                            <div class="brand-name">HomeLink</div>
+                            <div class="brand-sub">RWANDA</div>
+                        </div>
+                    </div>
+                    <div class="title">
+                        <h1>Statement of Account</h1>
+                        <p>${formatStatementDate(statement.periodFrom)} to ${formatStatementDate(statement.periodTo)}</p>
+                    </div>
+                </div>
+
+                <div class="meta">
+                    <div>
+                        <div><b>Property:</b> ${statement.property.title} — ${statement.property.addressLine}, ${statement.property.city}</div>
+                        <div><b>Unit:</b> ${statement.unit.label}</div>
+                    </div>
+                    <div>
+                        <div><b>Tenant:</b> ${statement.tenant.firstName} ${statement.tenant.lastName}</div>
+                        <div><b>Landlord:</b> ${statement.owner.firstName} ${statement.owner.lastName}</div>
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Reference</th>
+                            <th>Remarks</th>
+                            <th class="num">Debit</th>
+                            <th class="num">Credit</th>
+                            <th class="num">Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="background:#f8fafc">
+                            <td colspan="3">Opening Balance</td>
+                            <td class="num">RWF 0.00</td>
+                            <td class="num">RWF 0.00</td>
+                            <td class="num">RWF ${formatStatementMoney(statement.openingBalance)}</td>
+                        </tr>
+                        ${rowsHtml}
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="3">Total</td>
+                            <td class="num">RWF ${formatStatementMoney(statement.totalDebit)}</td>
+                            <td class="num">RWF ${formatStatementMoney(statement.totalCredit)}</td>
+                            <td class="num">RWF ${formatStatementMoney(statement.closingBalance)}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+
+                <div class="footer">
+                    <div class="powered">Powered by <span>HomeLink</span></div>
+                    <div>Generated: ${new Date(statement.generatedAt).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+                </div>
+            </body>
+        </html>
+    `;
 }
 
 export async function signLease(leaseId: string, requester: Requester) {

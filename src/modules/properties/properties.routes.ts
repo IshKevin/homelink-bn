@@ -21,6 +21,7 @@ import {
     createUnitHandler,
     deletePropertyDocumentHandler,
     deletePropertyImageHandler,
+    deleteUnitHandler,
     generateUnitsHandler,
     getPropertyDocumentHandler,
     getPropertyHandler,
@@ -601,6 +602,38 @@ router.patch(
     validate(updateUnitSchema),
     updateUnitHandler
 );
+
+/**
+ * @openapi
+ * /properties/{id}/units/{unitId}:
+ *   delete:
+ *     tags: [Properties]
+ *     summary: Delete (archive) a property's unit (owner, assigned agent, house manager, or admin)
+ *     description: Soft-delete — the unit disappears from the property's unit list and available-units search, but its row and any lease/invoice/payment history tied to it are kept, exactly like a terminated lease. Its unit number becomes free to reuse on a new unit.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: unitId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Unit archived
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       409:
+ *         description: Unit currently has an active tenant — end that lease first
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.delete("/:id/units/:unitId", authorize("owner", "agent", "house_manager", ...ADMIN_ROLES), deleteUnitHandler);
 
 /**
  * @openapi

@@ -61,11 +61,14 @@ const options: swaggerJsdoc.Options = {
         },
         security: [{ bearerAuth: [] }]
     },
+    // swagger-jsdoc's glob matching expects forward slashes even on Windows —
+    // path.join here would otherwise produce backslash-separated patterns
+    // that silently match zero files, leaving the whole spec empty.
     apis: [
         path.join(process.cwd(), "src/modules/**/*.routes.ts"),
         path.join(process.cwd(), "src/modules/**/*.docs.ts"),
         path.join(process.cwd(), "src/routes/*.ts")
-    ]
+    ].map((p) => p.split(path.sep).join("/"))
 };
 
 export const swaggerSpec = swaggerJsdoc(options);

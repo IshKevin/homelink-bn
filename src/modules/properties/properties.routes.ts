@@ -76,6 +76,35 @@ router.use(authenticate);
  *         rentAmount: { type: number }
  *         rentConditions: { type: string }
  *         ownerId: { type: string, format: uuid, description: "Required when an agent or admin creates a property on behalf of an owner" }
+ *     UpdatePropertyInput:
+ *       type: object
+ *       description: Any subset of these fields — at least one is required. category/type consistency is re-checked against the resulting merged property.
+ *       properties:
+ *         title: { type: string }
+ *         description: { type: string }
+ *         type: { type: string, enum: [apartment, house, studio, condo, commercial, other] }
+ *         category: { type: string, enum: [residential, commercial] }
+ *         sizeSqm: { type: number }
+ *         unitsCount: { type: integer }
+ *         upi: { type: string, description: "Rwandan cadastral parcel ID. Optional — most properties don't have one on file." }
+ *         terms: { type: array, items: { type: string } }
+ *         attributes:
+ *           type: array
+ *           items:
+ *             type: object
+ *             properties:
+ *               label: { type: string }
+ *               value: { type: string }
+ *         addressLine: { type: string }
+ *         city: { type: string }
+ *         state: { type: string }
+ *         country: { type: string }
+ *         postalCode: { type: string }
+ *         bedrooms: { type: number }
+ *         bathrooms: { type: number }
+ *         rentAmount: { type: number }
+ *         rentConditions: { type: string }
+ *         status: { type: string, enum: [available, occupied], description: "Direct status edits only toggle between available/occupied; a unit-less property has no occupied-by-lease concept of its own." }
  * /properties:
  *   post:
  *     tags: [Properties]
@@ -219,9 +248,7 @@ router.get("/units/import-template", getUnitsImportTemplateHandler);
  *     requestBody:
  *       content:
  *         application/json:
- *           schema:
- *             type: object
- *             description: Any subset of the property's editable fields
+ *           schema: { $ref: '#/components/schemas/UpdatePropertyInput' }
  *     responses:
  *       200:
  *         description: Property updated

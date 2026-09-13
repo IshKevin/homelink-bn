@@ -157,6 +157,29 @@ variable "sender_email" {
   default     = null
 }
 
+# The app only ever talks generic SMTP (src/services/email.service.ts uses
+# nodemailer against smtp_host/port/user/pass) — it has no AWS SES SDK
+# dependency. Setting all three overrides points every send at a different
+# transactional provider (Resend, Postmark, Mailgun, ...) instead of SES,
+# with no application code change. Leave all null to keep using SES.
+variable "smtp_host_override" {
+  description = "SMTP host to use instead of SES's email-smtp.<region>.amazonaws.com, e.g. smtp.resend.com."
+  type        = string
+  default     = null
+}
+
+variable "smtp_port_override" {
+  description = "SMTP port to use instead of SES's 587, if the alternate provider needs a different one."
+  type        = number
+  default     = null
+}
+
+variable "smtp_user_override" {
+  description = "SMTP username to use instead of the generated SES IAM SMTP user, e.g. \"resend\" for Resend."
+  type        = string
+  default     = null
+}
+
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------

@@ -193,19 +193,19 @@ resource "aws_ssm_parameter" "s3_secret_key" {
 resource "aws_ssm_parameter" "smtp_host" {
   name  = "${local.ssm_prefix}/app/smtp_host"
   type  = "String"
-  value = "email-smtp.${var.aws_region}.amazonaws.com"
+  value = coalesce(var.smtp_host_override, "email-smtp.${var.aws_region}.amazonaws.com")
 }
 
 resource "aws_ssm_parameter" "smtp_port" {
   name  = "${local.ssm_prefix}/app/smtp_port"
   type  = "String"
-  value = "587"
+  value = tostring(coalesce(var.smtp_port_override, 587))
 }
 
 resource "aws_ssm_parameter" "smtp_user" {
   name  = "${local.ssm_prefix}/app/smtp_user"
   type  = "SecureString"
-  value = aws_iam_access_key.ses_smtp.id
+  value = coalesce(var.smtp_user_override, aws_iam_access_key.ses_smtp.id)
 }
 
 # Placeholder — an IAM access key ID/secret is NOT a valid SMTP password.

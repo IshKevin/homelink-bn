@@ -72,3 +72,44 @@ resource "cloudflare_record" "ses_dkim" {
   proxied = false
   ttl     = 300
 }
+
+# --- SES custom MAIL FROM domain (mail.<domain_name>) -----------------------
+# Required by SES for aws_ses_domain_mail_from in ses.tf: an MX record so
+# bounces route back to SES, and an SPF TXT record so the envelope-from
+# aligns for DMARC. See docs/... note in ses.tf for why this matters.
+
+resource "cloudflare_record" "ses_mail_from_mx" {
+  count    = local.manage_dns ? 1 : 0
+  zone_id  = var.cloudflare_zone_id
+  name     = "mail.${var.domain_name}"
+  type     = "MX"
+  content  = "feedback-smtp.${var.aws_region}.amazonses.com"
+  priority = 10
+  proxied  = false
+  ttl      = 300
+}
+
+resource "cloudflare_record" "ses_mail_from_spf" {
+  count   = local.manage_dns ? 1 : 0
+  zone_id = var.cloudflare_zone_id
+  name    = "mail.${var.domain_name}"
+  type    = "TXT"
+  content = "v=spf1 include:amazonses.com ~all"
+  proxied = false
+  ttl     = 300
+}
+
+# --- DMARC ------------------------------------------------------------------
+# p=none: monitor-only. We don't have an inbox to receive aggregate reports
+# at yet, so no rua= — the record's presence (and the now-aligned SPF above)
+# is what matters for deliverability/reputation signals. Tighten to
+# quarantine/reject once sending volume and history justify it.
+resource "cloudflare_record" "dmarc" {
+  count   = local.manage_dns ? 1 : 0
+  zone_id = var.cloudflare_zone_id
+  name    = "_dmarc.${var.domain_name}"
+  type    = "TXT"
+  content = "v=DMARC1; p=none;"
+  proxied = false
+  ttl     = 300
+}

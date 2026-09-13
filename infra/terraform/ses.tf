@@ -10,6 +10,21 @@ resource "aws_ses_domain_dkim" "app" {
   domain = aws_ses_domain_identity.app[0].domain
 }
 
+# Custom MAIL FROM domain: without this, the envelope-from (Return-Path) is
+# on amazonses.com, not homelink.rw, so SPF never aligns with the header
+# From domain — only DKIM alignment holds. DMARC only requires ONE of the
+# two to align, so mail still passes, but a from-scratch SES setup lacking
+# this (and lacking any DMARC record at all, see dns.tf) is one of the
+# "incomplete sending infrastructure" signals AWS's automated SES production
+# access review reportedly weighs against a new/small account. This closes
+# that gap; see dns.tf for the MX + SPF records it requires.
+resource "aws_ses_domain_mail_from" "app" {
+  count                  = local.have_domain ? 1 : 0
+  domain                 = aws_ses_domain_identity.app[0].domain
+  mail_from_domain       = "mail.${var.domain_name}"
+  behavior_on_mx_failure = "UseDefaultValue" # fall back to the amazonses.com MAIL FROM rather than bouncing everything if this subdomain's MX/SPF ever lapses
+}
+
 # Note: a brand new AWS account's SES is in the sandbox (send only to
 # verified addresses). Request production access via the AWS Support
 # console once — Terraform/the SES API can't do this step.

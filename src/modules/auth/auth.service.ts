@@ -256,7 +256,7 @@ export async function forgotPassword(email: string) {
         expiresAt: addHours(new Date(), 1)
     });
 
-    const link = `${env.appUrl}/reset-password?token=${rawToken}`;
+    const link = `${env.frontendUrl}/reset-password?token=${rawToken}`;
     await sendMail({
         to: user.email,
         subject: "Reset your HomeLink password",

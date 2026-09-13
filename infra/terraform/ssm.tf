@@ -82,6 +82,17 @@ resource "aws_ssm_parameter" "app_url" {
   value = "https://${local.app_public_hostname}"
 }
 
+# The backend's own public URL (used for MTN's callback and the Swagger UI's
+# server entry) is NOT where a human clicking an emailed link should land —
+# that's the frontend app, which has the actual /reset-password, /set-password,
+# /join pages (see src/config/env.ts's frontendUrl). A separate parameter
+# because app_url and this one point at two different boxes.
+resource "aws_ssm_parameter" "frontend_url" {
+  name  = "${local.ssm_prefix}/app/frontend_url"
+  type  = "String"
+  value = "https://${local.frontend_public_hostname}"
+}
+
 # Consumed directly by infra/Caddyfile's `{$PUBLIC_HOSTNAME}` (via
 # infra/docker-compose.prod.yml's `caddy` service env_file) so Caddy
 # requests a real Let's Encrypt cert for whichever hostname app_url points
@@ -203,9 +214,11 @@ resource "aws_ssm_parameter" "smtp_port" {
 }
 
 resource "aws_ssm_parameter" "smtp_user" {
-  name  = "${local.ssm_prefix}/app/smtp_user"
-  type  = "SecureString"
-  value = coalesce(var.smtp_user_override, aws_iam_access_key.ses_smtp.id)
+  name = "${local.ssm_prefix}/app/smtp_user"
+  type = "SecureString"
+  # Explicit != null (not coalesce) so an intentional "" override — e.g. for
+  # an auth-less relay like Mailpit — isn't treated as absent.
+  value = var.smtp_user_override != null ? var.smtp_user_override : aws_iam_access_key.ses_smtp.id
 }
 
 # Placeholder — an IAM access key ID/secret is NOT a valid SMTP password.

@@ -47,7 +47,7 @@ async function createInvite(
 
     if (!invite) throw AppError.internal("Failed to create invite");
 
-    const link = `${env.appUrl}/join?token=${rawToken}`;
+    const link = `${env.frontendUrl}/join?token=${rawToken}`;
     const roleLabel = role === "house_manager" ? "house manager" : role === "owner" ? "landlord" : "tenant";
     await sendMail({
         to: email,

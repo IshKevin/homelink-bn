@@ -272,7 +272,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
     leasesCreatedTotal.inc({ new_tenant: String(!!input.newTenant) });
 
     if (rawPasswordResetToken) {
-        const link = `${env.appUrl}/set-password?token=${rawPasswordResetToken}`;
+        const link = `${env.frontendUrl}/set-password?token=${rawPasswordResetToken}`;
         await sendMail({
             to: tenant.email,
             subject: "Set your HomeLink password",

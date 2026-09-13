@@ -534,7 +534,7 @@ export async function createHouseOwner(adminId: string, input: CreateHouseOwnerI
         expiresAt: addHours(new Date(), 24)
     });
 
-    const link = `${env.appUrl}/set-password?token=${rawToken}`;
+    const link = `${env.frontendUrl}/set-password?token=${rawToken}`;
     await sendMail({
         to: owner.email,
         subject: "Set your HomeLink password",

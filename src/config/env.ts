@@ -6,6 +6,12 @@ export const env = {
     nodeEnv: process.env.NODE_ENV || "development",
     port: Number(process.env.PORT) || 3000,
     appUrl: process.env.APP_URL || "http://localhost:3000",
+    // Distinct from appUrl (the backend's OWN public URL — used for MTN's
+    // callback and the Swagger UI's server entry): this is where a HUMAN
+    // clicking an emailed link should land, i.e. the frontend app, which
+    // has the actual /reset-password, /set-password, /join pages. Falls
+    // back to appUrl so a single-host/local-dev setup keeps working.
+    frontendUrl: process.env.FRONTEND_URL || process.env.APP_URL || "http://localhost:3000",
     appName: process.env.APP_NAME || "HomeLink",
 
     // Comma-separated allowlist (e.g. the frontend's public hostname). Empty

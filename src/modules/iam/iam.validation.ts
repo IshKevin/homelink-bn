@@ -42,3 +42,9 @@ export const listInvitesSchema = {
         limit: z.coerce.number().int().positive().optional()
     })
 };
+
+export const searchTenantsSchema = {
+    query: z.object({
+        search: z.string().min(2).max(100)
+    })
+};

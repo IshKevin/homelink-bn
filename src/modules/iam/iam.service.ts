@@ -1,5 +1,5 @@
 import { addDays } from "date-fns";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { db } from "../../database";
 import { invites, leases, managerAssignments, suspensionRequests, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
@@ -79,6 +79,37 @@ export async function inviteTenant(inviter: Requester, email: string, propertyId
     }
     const ownerId = await resolveEffectiveOwnerId(inviter);
     return createInvite(inviter, ownerId, email, "tenant", propertyId);
+}
+
+// Owners/house managers can't hit GET /admin/users (admin-only) — this is
+// the narrow, tenant-only equivalent they need to find an existing tenant
+// account to assign directly to a unit, instead of always creating a new one.
+export async function searchTenants(requester: Requester, search: string) {
+    if (requester.role !== "owner" && requester.role !== "house_manager") {
+        throw AppError.forbidden("Only a house owner or house manager can search for tenants");
+    }
+
+    const term = `%${search}%`;
+    const rows = await db
+        .select({
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+            email: users.email,
+            phone: users.phone
+        })
+        .from(users)
+        .where(
+            and(
+                eq(users.role, "tenant"),
+                eq(users.isActive, true),
+                or(ilike(users.email, term), ilike(users.firstName, term), ilike(users.lastName, term), ilike(users.phone, term))
+            )
+        )
+        .orderBy(users.firstName)
+        .limit(10);
+
+    return rows;
 }
 
 export async function inviteLandlord(inviter: Requester, email: string) {

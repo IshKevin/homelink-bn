@@ -1,7 +1,20 @@
 import type { Request, Response } from "express";
 import { AppError } from "../../common/errors/AppError";
 import { sendSuccess } from "../../common/utils/response.util";
+import { buildPaginationMeta, getPagination } from "../../common/utils/pagination.util";
 import * as usersService from "./users.service";
+
+export async function searchUsersHandler(req: Request, res: Response) {
+    const { page, limit, offset } = getPagination(req);
+    const query = req.query as {
+        role?: "tenant" | "owner" | "agent" | "admin" | "superadmin" | "house_manager";
+        search?: string;
+    };
+
+    const { rows, total } = await usersService.searchUsers({ role: query.role, search: query.search }, { limit, offset });
+
+    return sendSuccess(res, { data: rows, meta: buildPaginationMeta(page, limit, total) });
+}
 
 export async function getMeHandler(req: Request, res: Response) {
     const user = await usersService.getById(req.user!.id);

@@ -1,5 +1,5 @@
 import { testRequest } from "../../../../tests/helpers/app";
-import { createAuthedUser } from "../../../../tests/helpers/factories";
+import { createAuthedUser, createUser } from "../../../../tests/helpers/factories";
 import * as storageService from "../../../services/storage.service";
 
 jest.mock("../../../services/storage.service", () => ({
@@ -8,6 +8,44 @@ jest.mock("../../../services/storage.service", () => ({
 }));
 
 describe("Users module", () => {
+    describe("GET /api/v1/users", () => {
+        it("lets an owner find a user by email", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+            const { user: tenant } = await createUser({ email: "findme@example.com", role: "tenant" });
+
+            const res = await testRequest()
+                .get("/api/v1/users")
+                .query({ search: "findme" })
+                .set("Authorization", `Bearer ${accessToken}`);
+
+            expect(res.status).toBe(200);
+            expect(res.body.data).toHaveLength(1);
+            expect(res.body.data[0].id).toBe(tenant.id);
+            expect(res.body.data[0].passwordHash).toBeUndefined();
+        });
+
+        it("filters by role", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+            const { user: agent } = await createUser({ email: "agent-search@example.com", role: "agent" });
+            await createUser({ email: "tenant-search@example.com", role: "tenant" });
+
+            const res = await testRequest()
+                .get("/api/v1/users")
+                .query({ role: "agent", search: "search" })
+                .set("Authorization", `Bearer ${accessToken}`);
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.map((u: { id: string }) => u.id)).toEqual([agent.id]);
+        });
+
+        it("forbids a tenant from searching the user directory", async () => {
+            const { accessToken } = await createAuthedUser({ role: "tenant" });
+
+            const res = await testRequest().get("/api/v1/users").set("Authorization", `Bearer ${accessToken}`);
+            expect(res.status).toBe(403);
+        });
+    });
+
     describe("GET /api/v1/users/me", () => {
         it("returns the authenticated user's profile", async () => {
             const { accessToken, user } = await createAuthedUser({ email: "me@example.com" });

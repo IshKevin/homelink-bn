@@ -8,7 +8,8 @@ import {
     inviteLandlordSchema,
     inviteManagerSchema,
     inviteTenantSchema,
-    listInvitesSchema
+    listInvitesSchema,
+    searchTenantsSchema
 } from "./iam.validation";
 import {
     acceptInviteHandler,
@@ -18,7 +19,8 @@ import {
     inviteTenantHandler,
     listInvitesHandler,
     listManagersHandler,
-    revokeManagerHandler
+    revokeManagerHandler,
+    searchTenantsHandler
 } from "./iam.controller";
 
 const router = Router();
@@ -153,6 +155,27 @@ router.patch("/managers/:id/revoke", authorize("owner"), revokeManagerHandler);
  *               $ref: '#/components/schemas/SuccessResponse'
  */
 router.post("/tenants/invite", authorize("owner", "house_manager"), validate(inviteTenantSchema), inviteTenantHandler);
+
+/**
+ * @openapi
+ * /iam/tenants/search:
+ *   get:
+ *     tags: [IAM]
+ *     summary: Search existing tenant accounts by name, email, or phone (house owner or house manager)
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         required: true
+ *         schema: { type: string, minLength: 2 }
+ *     responses:
+ *       200:
+ *         description: Up to 10 matching tenant accounts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ */
+router.get("/tenants/search", authorize("owner", "house_manager"), validate(searchTenantsSchema), searchTenantsHandler);
 
 /**
  * @openapi

@@ -1,13 +1,60 @@
-import { eq } from "drizzle-orm";
+import { and, count, eq, ilike, or } from "drizzle-orm";
 import { db } from "../../database";
 import { identityVerifications, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { buildObjectKey, uploadBuffer } from "../../services/storage.service";
 import { recordAction } from "../../services/audit.service";
 
-function toPublicUser(user: typeof users.$inferSelect) {
+type UserRow = typeof users.$inferSelect;
+
+function toPublicUser(user: UserRow) {
     const { passwordHash: _passwordHash, ...publicUser } = user;
     return publicUser;
+}
+
+export interface SearchUsersFilters {
+    role?: UserRow["role"] | undefined;
+    search?: string | undefined;
+}
+
+/**
+ * Directory lookup for landlords/agents/managers/admins to check whether a
+ * person already has an account (by name/email/phone) before creating a
+ * duplicate one — e.g. when assigning a tenant to a unit. Deliberately a
+ * narrower projection than admin.service.ts's listUsers: no isApproved,
+ * mustChangePassword, payoutMomoNumber, etc. — just enough to identify
+ * someone and grab their id.
+ */
+export async function searchUsers(filters: SearchUsersFilters, pagination: { limit: number; offset: number }) {
+    const conditions = [];
+    if (filters.role) conditions.push(eq(users.role, filters.role));
+    if (filters.search) {
+        const term = `%${filters.search}%`;
+        conditions.push(
+            or(ilike(users.firstName, term), ilike(users.lastName, term), ilike(users.email, term), ilike(users.phone, term))
+        );
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [countRow] = await db.select({ count: count() }).from(users).where(where);
+
+    const rows = await db
+        .select({
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+            email: users.email,
+            phone: users.phone,
+            role: users.role,
+            isActive: users.isActive
+        })
+        .from(users)
+        .where(where)
+        .orderBy(users.firstName, users.lastName)
+        .limit(pagination.limit)
+        .offset(pagination.offset);
+
+    return { rows, total: countRow?.count ?? 0 };
 }
 
 export async function getById(userId: string) {

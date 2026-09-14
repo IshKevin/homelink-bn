@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+export const searchUsersSchema = {
+    query: z.object({
+        role: z.enum(["tenant", "owner", "agent", "admin", "superadmin", "house_manager"]).optional(),
+        search: z.string().max(255).optional(),
+        page: z.coerce.number().int().positive().optional(),
+        limit: z.coerce.number().int().positive().optional()
+    })
+};
+
 export const updateProfileSchema = {
     body: z
         .object({

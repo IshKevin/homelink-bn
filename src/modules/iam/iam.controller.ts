@@ -18,6 +18,11 @@ export async function inviteLandlordHandler(req: Request, res: Response) {
     return sendSuccess(res, { statusCode: 201, message: "Landlord invite sent", data: invite });
 }
 
+export async function searchTenantsHandler(req: Request, res: Response) {
+    const tenants = await iamService.searchTenants(req.user!, req.query["search"] as string);
+    return sendSuccess(res, { data: tenants });
+}
+
 export async function listInvitesHandler(req: Request, res: Response) {
     const { limit, offset } = getPagination(req);
     const invitesList = await iamService.listInvites(req.user!, { limit, offset });

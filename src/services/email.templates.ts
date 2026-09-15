@@ -153,19 +153,27 @@ export function genericNotificationTemplate(firstName: string, message: string):
     );
 }
 
-export function setPasswordTemplate(firstName: string, link: string): string {
+export function setPasswordTemplate(firstName: string, link: string, propertyName?: string, unitLabel?: string): string {
+    const asTenantOf = propertyName
+        ? ` as the tenant of ${
+              unitLabel
+                  ? `<strong style="color: ${BRAND_NAVY};">${unitLabel}</strong> at <strong style="color: ${BRAND_NAVY};">${propertyName}</strong>`
+                  : `<strong style="color: ${BRAND_NAVY};">${propertyName}</strong>`
+          }`
+        : "";
     return wrapTemplate(
         "Set your HomeLink password",
         `<p style="margin: 0 0 4px;">Hi ${firstName},</p>
-         <p style="margin: 0;">An administrator created a HomeLink account for you. Set your password below to finish setting it up and sign in. This link expires in 24 hours.</p>
+         <p style="margin: 0;">A HomeLink account has been created for you${asTenantOf}. Set your password below to finish setting it up and sign in. This link expires in 24 hours.</p>
          ${ctaButton("Set password", link)}`
     );
 }
 
-export function inviteTemplate(inviterName: string, roleLabel: string, link: string): string {
+export function inviteTemplate(inviterName: string, roleLabel: string, link: string, propertyName?: string): string {
+    const forProperty = propertyName ? ` for <strong style="color: ${BRAND_NAVY};">${propertyName}</strong>` : "";
     return wrapTemplate(
         "You've been invited to HomeLink",
-        `<p style="margin: 0 0 4px;">${inviterName} has invited you to join HomeLink as a <strong style="color: ${BRAND_NAVY};">${roleLabel}</strong>.</p>
+        `<p style="margin: 0 0 4px;">${inviterName} has invited you to join HomeLink as a <strong style="color: ${BRAND_NAVY};">${roleLabel}</strong>${forProperty}.</p>
          <p style="margin: 0;">This invitation expires in 7 days.</p>
          ${ctaButton("Accept invitation", link)}`
     );

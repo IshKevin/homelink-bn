@@ -1,7 +1,7 @@
 import { addDays } from "date-fns";
 import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { db } from "../../database";
-import { invites, leases, managerAssignments, suspensionRequests, users } from "../../database/schema";
+import { invites, leases, managerAssignments, properties, suspensionRequests, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { generateRawToken, hashToken } from "../../common/utils/jwt.util";
 import { hashPassword } from "../../common/utils/password.util";
@@ -47,12 +47,18 @@ async function createInvite(
 
     if (!invite) throw AppError.internal("Failed to create invite");
 
+    let propertyName: string | undefined;
+    if (propertyId) {
+        const [property] = await db.select({ title: properties.title }).from(properties).where(eq(properties.id, propertyId)).limit(1);
+        propertyName = property?.title;
+    }
+
     const link = `${env.frontendUrl}/join?token=${rawToken}`;
     const roleLabel = role === "house_manager" ? "house manager" : role === "owner" ? "landlord" : "tenant";
     await sendMail({
         to: email,
         subject: "You've been invited to HomeLink",
-        html: inviteTemplate(`${inviterUser.firstName} ${inviterUser.lastName}`, roleLabel, link)
+        html: inviteTemplate(`${inviterUser.firstName} ${inviterUser.lastName}`, roleLabel, link, propertyName)
     });
 
     await recordAction({

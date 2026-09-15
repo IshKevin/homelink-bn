@@ -276,7 +276,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
         await sendMail({
             to: tenant.email,
             subject: "Set your HomeLink password",
-            html: setPasswordTemplate(tenant.firstName, link)
+            html: setPasswordTemplate(tenant.firstName, link, property.title, unit.label)
         });
     }
 

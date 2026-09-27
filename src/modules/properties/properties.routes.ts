@@ -20,6 +20,7 @@ import {
     createPropertyHandler,
     createUnitHandler,
     deletePropertyDocumentHandler,
+    deletePropertyHandler,
     deletePropertyImageHandler,
     deleteUnitHandler,
     generateUnitsHandler,
@@ -298,6 +299,45 @@ router.patch(
     updatePropertyHandler
 );
 router.get("/:id", getPropertyHandler);
+
+/**
+ * @openapi
+ * /properties/{id}:
+ *   delete:
+ *     tags: [Properties]
+ *     summary: Permanently delete a property (owner, house manager, or admin) — only if it has no lease history
+ *     description: >
+ *       Deliberately narrow: for cleaning up a genuine accidental duplicate
+ *       (e.g. a double-submitted create), not for removing a property with
+ *       real history. Blocked (409) if any lease — even a terminated or
+ *       rejected one — has ever been created against this property; use
+ *       deactivate instead in that case.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Property deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       404:
+ *         description: Property not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ *       409:
+ *         description: Property has lease history and cannot be deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.delete("/:id", authorize("owner", "agent", "house_manager", ...ADMIN_ROLES), deletePropertyHandler);
 
 /**
  * @openapi

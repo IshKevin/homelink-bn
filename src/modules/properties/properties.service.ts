@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../database";
-import { properties, propertyImages, propertyUnits, users } from "../../database/schema";
+import { leases, properties, propertyImages, propertyUnits, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
 import { buildExcelBuffer, readExcelRows } from "../../services/excel.service";
@@ -222,6 +222,31 @@ export async function updateProperty(propertyId: string, requester: Requester, i
     await recordAction({ userId: requester.id, action: "property.update", entity: "property", entityId: propertyId });
 
     return updated;
+}
+
+// Deliberately narrow: this exists to let an owner/admin clean up a genuine
+// accidental duplicate (e.g. a double-submitted create), not to remove a
+// property with real history. leases.propertyId cascades at the DB level,
+// so without this guard a delete here would silently wipe real tenants'
+// lease/payment history — blocking on any lease ever having existed (even
+// terminated ones) is intentional, not just "no active lease".
+export async function deleteProperty(propertyId: string, requester: Requester): Promise<void> {
+    const [property] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!property) throw AppError.notFound("Property not found");
+
+    await assertPropertyWriteAccess(property, requester);
+
+    const [existingLease] = await db.select({ id: leases.id }).from(leases).where(eq(leases.propertyId, propertyId)).limit(1);
+    if (existingLease) {
+        throw AppError.conflict(
+            "This property has lease history and can't be deleted — deactivate it instead if it should no longer be listed."
+        );
+    }
+
+    const [deleted] = await db.delete(properties).where(eq(properties.id, propertyId)).returning();
+    if (!deleted) throw AppError.notFound("Property not found");
+
+    await recordAction({ userId: requester.id, action: "property.delete", entity: "property", entityId: propertyId });
 }
 
 export async function listProperties(

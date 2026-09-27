@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
-import { createAuthedUser, createProperty, createUser } from "../../../../tests/helpers/factories";
+import { createAuthedUser, createLease, createProperty, createUser } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
 import { leases, properties, propertyUnits } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";
@@ -169,6 +169,65 @@ describe("Properties module", () => {
                 .send({ title: "Hacked Title" });
 
             expect(res.status).toBe(403);
+        });
+    });
+
+    describe("DELETE /api/v1/properties/:id", () => {
+        it("lets the owner delete their own property when it has no lease history", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+
+            const res = await testRequest()
+                .delete(`/api/v1/properties/${property.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+
+            expect(res.status).toBe(200);
+
+            const getRes = await testRequest()
+                .get(`/api/v1/properties/${property.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(getRes.status).toBe(404);
+
+            const remainingUnits = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+            expect(remainingUnits).toHaveLength(0);
+        });
+
+        it("rejects a different owner from deleting the property", async () => {
+            const { user: owner } = await createUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const { accessToken: otherOwnerToken } = await createAuthedUser({ role: "owner" });
+
+            const res = await testRequest()
+                .delete(`/api/v1/properties/${property.id}`)
+                .set("Authorization", `Bearer ${otherOwnerToken}`);
+
+            expect(res.status).toBe(403);
+        });
+
+        it("blocks deletion once the property has lease history, even a terminated lease", async () => {
+            const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id });
+            const { user: tenant } = await createUser({ role: "tenant" });
+            await createLease({ propertyId: property.id, tenantId: tenant.id, ownerId: owner.id, status: "terminated" });
+
+            const res = await testRequest()
+                .delete(`/api/v1/properties/${property.id}`)
+                .set("Authorization", `Bearer ${accessToken}`);
+
+            expect(res.status).toBe(409);
+
+            const stillThere = await db.select().from(properties).where(eq(properties.id, property.id));
+            expect(stillThere).toHaveLength(1);
+        });
+
+        it("returns 404 for a property that doesn't exist", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+
+            const res = await testRequest()
+                .delete("/api/v1/properties/00000000-0000-0000-0000-000000000000")
+                .set("Authorization", `Bearer ${accessToken}`);
+
+            expect(res.status).toBe(404);
         });
     });
 

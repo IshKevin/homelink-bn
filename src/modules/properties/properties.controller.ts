@@ -14,6 +14,11 @@ export async function updatePropertyHandler(req: Request, res: Response) {
     return sendSuccess(res, { message: "Property updated", data: property });
 }
 
+export async function deletePropertyHandler(req: Request, res: Response) {
+    await propertiesService.deleteProperty(req.params["id"] as string, req.user!);
+    return sendSuccess(res, { message: "Property deleted" });
+}
+
 export async function listPropertiesHandler(req: Request, res: Response) {
     const { page, limit, offset } = getPagination(req);
     const query = req.query as {

@@ -79,6 +79,38 @@ describe("Properties module", () => {
             expect(res.body.data.ownerId).toBe(owner.id);
         });
 
+        it("rejects a near-duplicate submission (same owner/title/address) within a few seconds", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+
+            const firstRes = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send(validPropertyPayload);
+            expect(firstRes.status).toBe(201);
+
+            const secondRes = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send(validPropertyPayload);
+            expect(secondRes.status).toBe(409);
+        });
+
+        it("allows the same owner to create a different property right after, even with an overlapping title", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+
+            const firstRes = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send(validPropertyPayload);
+            expect(firstRes.status).toBe(201);
+
+            const secondRes = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ ...validPropertyPayload, addressLine: "456 Other St" });
+            expect(secondRes.status).toBe(201);
+        });
+
         it("rejects a tenant from creating a property", async () => {
             const { accessToken } = await createAuthedUser({ role: "tenant" });
 
@@ -126,21 +158,22 @@ describe("Properties module", () => {
             expect(valid.body.data.sizeSqm).toBe("250.00");
         });
 
-        it("requires unitsCount (doors) for a residential apartment", async () => {
+        it("does not require unitsCount for a residential apartment, but accepts it when given", async () => {
             const { accessToken } = await createAuthedUser({ role: "owner" });
 
-            const missingUnits = await testRequest()
+            const withoutUnits = await testRequest()
                 .post("/api/v1/properties")
                 .set("Authorization", `Bearer ${accessToken}`)
                 .send({ ...validPropertyPayload, category: "residential", type: "apartment", unitsCount: undefined });
-            expect(missingUnits.status).toBe(400);
+            expect(withoutUnits.status).toBe(201);
+            expect(withoutUnits.body.data.unitsCount).toBeNull();
 
-            const valid = await testRequest()
+            const withUnits = await testRequest()
                 .post("/api/v1/properties")
                 .set("Authorization", `Bearer ${accessToken}`)
-                .send({ ...validPropertyPayload, category: "residential", type: "apartment", unitsCount: 6 });
-            expect(valid.status).toBe(201);
-            expect(valid.body.data.unitsCount).toBe(6);
+                .send({ ...validPropertyPayload, category: "residential", type: "apartment", unitsCount: 6, addressLine: "789 Another St" });
+            expect(withUnits.status).toBe(201);
+            expect(withUnits.body.data.unitsCount).toBe(6);
         });
     });
 

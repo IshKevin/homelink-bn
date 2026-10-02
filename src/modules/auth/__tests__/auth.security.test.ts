@@ -58,9 +58,14 @@ describe("Auth security", () => {
             expect(challengeRes.body.data.requiresVerification).toBe(true);
             expect(challengeRes.body.data.accessToken).toBeUndefined();
 
-            const otpCall = mockedSendMail.mock.calls.find((c) => c[0].to === user.email && /\d{6}/.test(c[0].html));
+            // A plain /\d{6}/ is not safe here — the email template's inline
+            // styling includes hex colors like #334155, which is itself 6
+            // consecutive digits and appears before the real code in the
+            // HTML. Anchor on the code's distinctive letter-spacing instead
+            // of grabbing the first 6-digit run in the whole document.
+            const otpCall = mockedSendMail.mock.calls.find((c) => c[0].to === user.email && /letter-spacing: 6px/.test(c[0].html));
             if (!otpCall) throw new Error("OTP email not sent");
-            const code = (otpCall[0].html as string).match(/(\d{6})/)?.[1];
+            const code = (otpCall[0].html as string).match(/letter-spacing: 6px[^>]*>(\d{6})</)?.[1];
 
             const verifyRes = await testRequest()
                 .post("/api/v1/auth/login/verify")

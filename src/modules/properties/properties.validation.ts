@@ -43,13 +43,13 @@ function checkCategoryTypeConsistency(
                 path: ["type"]
             });
         }
-        if (requireFields && data.type === "apartment" && data.unitsCount === undefined) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "unitsCount (doors) is required for apartment properties",
-                path: ["unitsCount"]
-            });
-        }
+        // unitsCount is deliberately NOT required here, even for apartments —
+        // it's just a reference/planning number, disconnected from the real
+        // PropertyUnit records created via Manage Units. Requiring it at
+        // create time blocked every apartment-type property from ever being
+        // created once the frontend stopped collecting it (confirmed live:
+        // every create hit this 400 "Validation failed" unless the type was
+        // changed away from the default "apartment").
     }
 }
 

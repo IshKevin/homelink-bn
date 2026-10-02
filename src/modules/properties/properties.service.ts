@@ -158,43 +158,69 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
         throw AppError.forbidden("You do not have permission to create properties");
     }
 
-    const [property] = await db
-        .insert(properties)
-        .values({
-            ownerId,
-            agentId,
-            title: input.title,
-            description: input.description,
-            type: input.type,
-            category: input.category,
-            sizeSqm: input.sizeSqm !== undefined ? String(input.sizeSqm) : undefined,
-            unitsCount: input.unitsCount,
-            upi: input.upi,
-            terms: input.terms,
-            attributes: input.attributes,
-            addressLine: input.addressLine,
-            city: input.city,
-            state: input.state,
-            country: input.country,
-            postalCode: input.postalCode,
-            bedrooms: input.bedrooms !== undefined ? String(input.bedrooms) : undefined,
-            bathrooms: input.bathrooms !== undefined ? String(input.bathrooms) : undefined,
-            rentAmount: String(input.rentAmount),
-            rentConditions: input.rentConditions,
-            status: "available",
-            approvalStatus: "pending"
-        })
-        .returning();
+    // Guards against a double-submit, a retried request, or two open tabs all
+    // creating the same listing — the actual cause of a real incident where a
+    // flaky submit produced 5 copies of the same property. Scoped to this
+    // owner + title + address within a short window: long enough to absorb a
+    // retry, short enough that genuinely re-listing the same address later
+    // (e.g. a new build on the same plot) still goes through.
+    const [recentDuplicate] = await db
+        .select({ id: properties.id })
+        .from(properties)
+        .where(
+            and(
+                eq(properties.ownerId, ownerId),
+                eq(properties.title, input.title),
+                eq(properties.addressLine, input.addressLine),
+                gte(properties.createdAt, new Date(Date.now() - 10_000))
+            )
+        )
+        .limit(1);
+    if (recentDuplicate) {
+        throw AppError.conflict("This property was just created — check your properties list before submitting again.");
+    }
 
-    if (!property) throw AppError.internal("Failed to create property");
+    const { property } = await db.transaction(async (tx) => {
+        const [createdProperty] = await tx
+            .insert(properties)
+            .values({
+                ownerId,
+                agentId,
+                title: input.title,
+                description: input.description,
+                type: input.type,
+                category: input.category,
+                sizeSqm: input.sizeSqm !== undefined ? String(input.sizeSqm) : undefined,
+                unitsCount: input.unitsCount,
+                upi: input.upi,
+                terms: input.terms,
+                attributes: input.attributes,
+                addressLine: input.addressLine,
+                city: input.city,
+                state: input.state,
+                country: input.country,
+                postalCode: input.postalCode,
+                bedrooms: input.bedrooms !== undefined ? String(input.bedrooms) : undefined,
+                bathrooms: input.bathrooms !== undefined ? String(input.bathrooms) : undefined,
+                rentAmount: String(input.rentAmount),
+                rentConditions: input.rentConditions,
+                status: "available",
+                approvalStatus: "pending"
+            })
+            .returning();
 
-    await db.insert(propertyUnits).values({
-        propertyId: property.id,
-        label: property.title,
-        bedrooms: property.bedrooms,
-        bathrooms: property.bathrooms,
-        rentAmount: property.rentAmount,
-        status: "available"
+        if (!createdProperty) throw AppError.internal("Failed to create property");
+
+        await tx.insert(propertyUnits).values({
+            propertyId: createdProperty.id,
+            label: createdProperty.title,
+            bedrooms: createdProperty.bedrooms,
+            bathrooms: createdProperty.bathrooms,
+            rentAmount: createdProperty.rentAmount,
+            status: "available"
+        });
+
+        return { property: createdProperty };
     });
 
     await recordAction({ userId: creator.id, action: "property.create", entity: "property", entityId: property.id });

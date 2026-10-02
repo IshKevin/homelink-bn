@@ -353,14 +353,50 @@ export async function listLeases(
         total = countRow?.count ?? 0;
     }
 
-    const tenants = await getTenantSummaries(rows.map((r) => r.tenantId));
-    return { rows: rows.map((r) => ({ ...r, tenant: tenants.get(r.tenantId) })), total };
+    // Leases only ever stored bare propertyId/unitId/ownerId, forcing the
+    // frontend's lease list to fall back to placeholders ("—", "Owner
+    // DF0D540C") instead of the actual property/unit/owner — the same class
+    // of gap getTenantSummaries already fixed for tenantId. Batched the same
+    // way: one query per entity regardless of how many leases are on the page.
+    const propertyIds = [...new Set(rows.map((r) => r.propertyId))];
+    const unitIds = [...new Set(rows.map((r) => r.unitId))];
+
+    const [propertyRows, unitRows, owners, tenants] = await Promise.all([
+        propertyIds.length
+            ? db.select({ id: properties.id, title: properties.title }).from(properties).where(inArray(properties.id, propertyIds))
+            : [],
+        unitIds.length
+            ? db.select({ id: propertyUnits.id, label: propertyUnits.label }).from(propertyUnits).where(inArray(propertyUnits.id, unitIds))
+            : [],
+        getTenantSummaries(rows.map((r) => r.ownerId)),
+        getTenantSummaries(rows.map((r) => r.tenantId))
+    ]);
+
+    const propertyMap = new Map(propertyRows.map((p) => [p.id, p]));
+    const unitMap = new Map(unitRows.map((u) => [u.id, u]));
+
+    return {
+        rows: rows.map((r) => ({
+            ...r,
+            property: propertyMap.get(r.propertyId),
+            unit: unitMap.get(r.unitId),
+            owner: owners.get(r.ownerId),
+            tenant: tenants.get(r.tenantId)
+        })),
+        total
+    };
 }
 
 export async function getLeaseById(leaseId: string, requester: Requester) {
     const lease = await getLeaseOrThrow(leaseId);
     await assertLeaseAccess(lease, requester);
-    return { ...lease, tenant: await getTenantSummary(lease.tenantId) };
+    const [tenant, owner, property, unit] = await Promise.all([
+        getTenantSummary(lease.tenantId),
+        getTenantSummary(lease.ownerId),
+        getPropertyOrThrow(lease.propertyId),
+        getUnitOrThrow(lease.unitId)
+    ]);
+    return { ...lease, tenant, owner, property, unit };
 }
 
 export interface LeaseStatementRow {

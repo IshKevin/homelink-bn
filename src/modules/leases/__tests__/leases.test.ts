@@ -375,6 +375,9 @@ describe("Leases module", () => {
             expect(res.status).toBe(200);
             expect(res.body.data.id).toBe(lease.id);
             expect(res.body.data.tenant).toMatchObject({ id: tenant.id, email: tenant.email });
+            expect(res.body.data.owner).toMatchObject({ id: owner.id, email: owner.email });
+            expect(res.body.data.property).toMatchObject({ id: property.id, title: property.title });
+            expect(res.body.data.unit).toBeDefined();
 
             const { accessToken: otherTenantToken } = await createAuthedUser({ role: "tenant" });
             const forbiddenRes = await testRequest()
@@ -670,6 +673,21 @@ describe("Leases module", () => {
                 email: tenant.email,
                 phone: tenant.phone
             });
+        });
+
+        it("embeds property, unit, and owner summaries on each lease instead of bare ids", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const { user: tenant } = await createAuthedUser({ role: "tenant" });
+            const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id));
+            await createLease({ propertyId: property.id, unitId: unit!.id, ownerId: owner.id, tenantId: tenant.id });
+
+            const res = await testRequest().get("/api/v1/leases").set("Authorization", `Bearer ${ownerToken}`);
+
+            expect(res.status).toBe(200);
+            expect(res.body.data[0].property).toMatchObject({ id: property.id, title: property.title });
+            expect(res.body.data[0].unit).toMatchObject({ id: unit!.id, label: unit!.label });
+            expect(res.body.data[0].owner).toMatchObject({ id: owner.id, email: owner.email });
         });
     });
 

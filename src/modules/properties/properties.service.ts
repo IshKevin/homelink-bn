@@ -124,6 +124,24 @@ async function assertPropertyWriteAccess(property: PropertyRow, requester: Reque
     throw AppError.forbidden("You do not have permission to modify this property");
 }
 
+/**
+ * A tenant may read a property/its units even when it isn't publicly
+ * approved+active, as long as they have a real lease on it — the
+ * approved+active gate exists for public browsing, not for someone who's
+ * already a legitimate party to that property via a lease.
+ */
+async function assertTenantPropertyReadAccess(property: PropertyRow, requester: Requester) {
+    if (requester.role !== "tenant") return;
+    if (property.approvalStatus === "approved" && property.isActive) return;
+
+    const [ownLease] = await db
+        .select({ id: leases.id })
+        .from(leases)
+        .where(and(eq(leases.propertyId, property.id), eq(leases.tenantId, requester.id)))
+        .limit(1);
+    if (!ownLease) throw AppError.notFound("Property not found");
+}
+
 export async function createProperty(creator: Requester, input: CreatePropertyInput) {
     let ownerId: string;
     let agentId: string | undefined;
@@ -325,9 +343,7 @@ export async function getPropertyById(propertyId: string, requester: Requester) 
 
     if (!property) throw AppError.notFound("Property not found");
 
-    if (requester.role === "tenant" && !(property.approvalStatus === "approved" && property.isActive)) {
-        throw AppError.notFound("Property not found");
-    }
+    await assertTenantPropertyReadAccess(property, requester);
 
     const activeUnits = property.units.filter((unit) => !unit.deletedAt);
 
@@ -421,9 +437,7 @@ export async function listUnits(propertyId: string, requester: Requester) {
     const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!propertyRow) throw AppError.notFound("Property not found");
 
-    if (requester.role === "tenant" && !(propertyRow.approvalStatus === "approved" && propertyRow.isActive)) {
-        throw AppError.notFound("Property not found");
-    }
+    await assertTenantPropertyReadAccess(propertyRow, requester);
 
     return db
         .select()

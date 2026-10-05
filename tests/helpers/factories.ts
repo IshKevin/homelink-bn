@@ -64,6 +64,9 @@ export interface CreatePropertyOverrides {
     rentAmount?: number;
     bedrooms?: number;
     bathrooms?: number;
+    // Set false to skip the auto-created default unit — e.g. for tests that
+    // assert on exactly which units exist on a floor.
+    withDefaultUnit?: boolean;
 }
 
 export async function createProperty(overrides: CreatePropertyOverrides) {
@@ -102,15 +105,17 @@ export async function createProperty(overrides: CreatePropertyOverrides) {
     const groundFloor = createdFloors.find((f) => f.index === 0);
     if (!groundFloor) throw new Error("Failed to create test property's ground floor");
 
-    await db.insert(propertyUnits).values({
-        propertyId: property.id,
-        floorId: groundFloor.id,
-        label: property.title,
-        bedrooms,
-        bathrooms,
-        rentAmount,
-        status: overrides.status ?? "available"
-    });
+    if (overrides.withDefaultUnit ?? true) {
+        await db.insert(propertyUnits).values({
+            propertyId: property.id,
+            floorId: groundFloor.id,
+            label: property.title,
+            bedrooms,
+            bathrooms,
+            rentAmount,
+            status: overrides.status ?? "available"
+        });
+    }
 
     return property;
 }

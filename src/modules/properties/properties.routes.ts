@@ -312,6 +312,83 @@ router.delete("/:id", authorize("owner", "agent", "house_manager", ...ADMIN_ROLE
 
 /**
  * @openapi
+ * /properties/{id}/images:
+ *   post:
+ *     tags: [Properties]
+ *     summary: Upload images for a property
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               images:
+ *                 type: array
+ *                 items: { type: string, format: binary }
+ *     responses:
+ *       201:
+ *         description: Images uploaded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: At least one image is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.post(
+    "/:id/images",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    upload.array("images", 10),
+    addPropertyImagesHandler
+);
+
+/**
+ * @openapi
+ * /properties/{id}/images/{imageId}:
+ *   delete:
+ *     tags: [Properties]
+ *     summary: Delete a property image
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: imageId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Image deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       404:
+ *         description: Image not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+router.delete(
+    "/:id/images/:imageId",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    deletePropertyImageHandler
+);
+
+/**
+ * @openapi
  * /properties/{id}/floors:
  *   get:
  *     tags: [Properties]

@@ -181,7 +181,7 @@ describe("Properties module", () => {
 
         it("lists a floor's units separately from other floors", async () => {
             const { user: owner, accessToken } = await createAuthedUser({ role: "owner" });
-            const property = await createProperty({ ownerId: owner.id, numberOfFloors: 2 });
+            const property = await createProperty({ ownerId: owner.id, numberOfFloors: 2, withDefaultUnit: false });
             const groundFloor = await getGroundFloor(property.id);
             const [floor1] = await db.select().from(floors).where(eq(floors.propertyId, property.id)).orderBy(floors.index).limit(2).offset(1);
 

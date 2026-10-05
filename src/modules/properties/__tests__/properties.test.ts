@@ -58,6 +58,40 @@ describe("Properties module", () => {
             expect(detailRes.body.data.totalUnits).toBe(0);
         });
 
+        it("auto-creates basement floors with negative indices, counting down from Basement 1", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+
+            const res = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send({ ...validPropertyPayload, numberOfFloors: 2, numberOfBasementFloors: 2 });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.numberOfBasementFloors).toBe(2);
+
+            const floorsRes = await testRequest()
+                .get(`/api/v1/properties/${res.body.data.id}/floors`)
+                .set("Authorization", `Bearer ${accessToken}`);
+            expect(floorsRes.body.data.map((f: { name: string; index: number }) => [f.name, f.index])).toEqual([
+                ["Basement 2", -2],
+                ["Basement 1", -1],
+                ["Ground", 0],
+                ["Floor 1", 1]
+            ]);
+        });
+
+        it("defaults numberOfBasementFloors to 0 when omitted", async () => {
+            const { accessToken } = await createAuthedUser({ role: "owner" });
+
+            const res = await testRequest()
+                .post("/api/v1/properties")
+                .set("Authorization", `Bearer ${accessToken}`)
+                .send(validPropertyPayload);
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.numberOfBasementFloors).toBe(0);
+        });
+
         it("requires an ownerId when an agent creates on behalf of an owner", async () => {
             const { accessToken } = await createAuthedUser({ role: "agent" });
 

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-const propertyTypeValues = ["apartment", "house", "studio", "condo", "commercial", "other"] as const;
+// Full historical set — kept for filtering/reading existing properties.
+const propertyTypeValues = ["apartment", "house", "studio", "condo", "commercial", "other", "mixed_use"] as const;
+// New/updated properties may only pick from this narrower, currently-offered set.
+const creatablePropertyTypeValues = ["apartment", "commercial", "mixed_use"] as const;
 
 // Unbounded z.string() lets any authenticated user submit a multi-hundred-MB
 // payload on every request, bloating Postgres storage/WAL and anything that
@@ -12,9 +15,10 @@ const longText = (max = 5000) => z.string().min(1).max(max);
 export const createPropertySchema = {
     body: z.object({
         title: shortText(),
-        type: z.enum(propertyTypeValues),
+        type: z.enum(creatablePropertyTypeValues),
         location: shortText(500),
         numberOfFloors: z.number().int().min(1).max(200),
+        numberOfBasementFloors: z.number().int().min(0).max(50).optional(),
         ownerId: z.string().uuid().optional()
     })
 };
@@ -23,7 +27,7 @@ export const updatePropertySchema = {
     body: z
         .object({
             title: shortText().optional(),
-            type: z.enum(propertyTypeValues).optional(),
+            type: z.enum(creatablePropertyTypeValues).optional(),
             location: shortText(500).optional(),
             status: z.enum(["available", "occupied"]).optional()
         })

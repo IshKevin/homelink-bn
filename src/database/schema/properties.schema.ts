@@ -2,13 +2,16 @@ import { boolean, integer, numeric, pgEnum, pgTable, text, timestamp, uniqueInde
 import { relations, sql } from "drizzle-orm";
 import { users } from "./users.schema";
 
+// house/studio/condo/other are kept for existing rows (read/filter still
+// work) but are no longer offered at creation — see createPropertySchema.
 export const propertyTypeEnum = pgEnum("property_type", [
     "apartment",
     "house",
     "studio",
     "condo",
     "commercial",
-    "other"
+    "other",
+    "mixed_use"
 ]);
 export const propertyStatusEnum = pgEnum("property_status", ["available", "occupied"]);
 // Separate from propertyStatusEnum on purpose: a *unit* can be pulled out of
@@ -36,6 +39,9 @@ export const properties = pgTable("properties", {
     // the rest.
     location: text("location").notNull(),
     numberOfFloors: integer("number_of_floors").notNull(),
+    // 0 = no basement. Basement floors get negative indices in `floors`
+    // (-1 = "Basement 1", the uppermost basement level, counting down).
+    numberOfBasementFloors: integer("number_of_basement_floors").notNull().default(0),
     status: propertyStatusEnum("status").notNull().default("available"),
     approvalStatus: approvalStatusEnum("approval_status").notNull().default("pending"),
     isActive: boolean("is_active").notNull().default(true),

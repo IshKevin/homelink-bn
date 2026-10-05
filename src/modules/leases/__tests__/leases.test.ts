@@ -558,7 +558,7 @@ describe("Leases module", () => {
             const addUnitRes = await testRequest()
                 .post(`/api/v1/properties/${property.id}/units`)
                 .set("Authorization", `Bearer ${ownerToken}`)
-                .send({ label: "Unit 2", rentAmount: 900 });
+                .send({ label: "Unit 2", floorId: unit1.floorId, rentAmount: 900 });
             expect(addUnitRes.status).toBe(201);
             const unit2Id = addUnitRes.body.data.id as string;
 

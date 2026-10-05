@@ -15,9 +15,11 @@ type PropertyRow = typeof properties.$inferSelect;
 type PropertyUnitRow = typeof propertyUnits.$inferSelect;
 type FloorRow = typeof floors.$inferSelect;
 
-/** 0 -> "Ground", N -> "Floor N" — the auto-naming convention for a newly created floor. */
+/** 0 -> "Ground", N -> "Floor N", -N -> "Basement N" — the auto-naming convention for a newly created floor. */
 function floorName(index: number): string {
-    return index === 0 ? "Ground" : `Floor ${index}`;
+    if (index === 0) return "Ground";
+    if (index < 0) return `Basement ${-index}`;
+    return `Floor ${index}`;
 }
 
 export interface CreatePropertyInput {
@@ -25,6 +27,7 @@ export interface CreatePropertyInput {
     type: PropertyRow["type"];
     location: string;
     numberOfFloors: number;
+    numberOfBasementFloors?: number;
     ownerId?: string;
 }
 
@@ -187,6 +190,7 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
                 type: input.type,
                 location: input.location,
                 numberOfFloors: input.numberOfFloors,
+                numberOfBasementFloors: input.numberOfBasementFloors ?? 0,
                 status: "available",
                 approvalStatus: "pending"
             })
@@ -194,17 +198,23 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
 
         if (!createdProperty) throw AppError.internal("Failed to create property");
 
-        // One floor per the requested count, auto-named Ground/Floor 1/Floor 2/...
-        // — no units yet, those are added afterward via the floor-scoped
-        // create/generate endpoints below, matching the register-then-manage
-        // workflow this is built around.
-        await tx.insert(floors).values(
-            Array.from({ length: input.numberOfFloors }, (_, index) => ({
+        // One floor per the requested count, auto-named Ground/Floor 1/Floor 2/...,
+        // plus one per basement level counting down (-1 = Basement 1, the
+        // uppermost basement level) — no units yet, those are added afterward
+        // via the floor-scoped create/generate endpoints below, matching the
+        // register-then-manage workflow this is built around.
+        const basementCount = input.numberOfBasementFloors ?? 0;
+        await tx.insert(floors).values([
+            ...Array.from({ length: input.numberOfFloors }, (_, index) => ({
                 propertyId: createdProperty.id,
                 name: floorName(index),
                 index
-            }))
-        );
+            })),
+            ...Array.from({ length: basementCount }, (_, i) => {
+                const index = -(i + 1);
+                return { propertyId: createdProperty.id, name: floorName(index), index };
+            })
+        ]);
 
         return { property: createdProperty };
     });

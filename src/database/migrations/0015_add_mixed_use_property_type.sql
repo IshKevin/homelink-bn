@@ -1,0 +1,1 @@
+ALTER TYPE "public"."property_type" ADD VALUE 'mixed_use';

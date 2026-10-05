@@ -55,6 +55,7 @@ export interface CreatePropertyOverrides {
     type?: "apartment" | "house" | "studio" | "condo" | "commercial" | "other";
     location?: string;
     numberOfFloors?: number;
+    numberOfBasementFloors?: number;
     status?: "available" | "occupied";
     approvalStatus?: "pending" | "approved" | "rejected";
     isActive?: boolean;
@@ -83,6 +84,7 @@ export async function createProperty(overrides: CreatePropertyOverrides) {
             type: overrides.type ?? "apartment",
             location: overrides.location ?? `${faker.location.streetAddress()}, ${faker.location.city()}`,
             numberOfFloors: overrides.numberOfFloors ?? 1,
+            numberOfBasementFloors: overrides.numberOfBasementFloors ?? 0,
             status: overrides.status ?? "available",
             approvalStatus: overrides.approvalStatus ?? "pending",
             isActive: overrides.isActive ?? true
@@ -92,15 +94,21 @@ export async function createProperty(overrides: CreatePropertyOverrides) {
     if (!property) throw new Error("Failed to create test property");
 
     const floorCount = overrides.numberOfFloors ?? 1;
+    const basementCount = overrides.numberOfBasementFloors ?? 0;
     const createdFloors = await db
         .insert(floors)
-        .values(
-            Array.from({ length: floorCount }, (_, index) => ({
+        .values([
+            ...Array.from({ length: floorCount }, (_, index) => ({
                 propertyId: property.id,
                 name: index === 0 ? "Ground" : `Floor ${index}`,
                 index
+            })),
+            ...Array.from({ length: basementCount }, (_, i) => ({
+                propertyId: property.id,
+                name: `Basement ${i + 1}`,
+                index: -(i + 1)
             }))
-        )
+        ])
         .returning();
     const groundFloor = createdFloors.find((f) => f.index === 0);
     if (!groundFloor) throw new Error("Failed to create test property's ground floor");

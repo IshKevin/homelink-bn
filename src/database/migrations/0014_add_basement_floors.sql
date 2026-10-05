@@ -1,0 +1,1 @@
+ALTER TABLE "properties" ADD COLUMN "number_of_basement_floors" integer DEFAULT 0 NOT NULL;

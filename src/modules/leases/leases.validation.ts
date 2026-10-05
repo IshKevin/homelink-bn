@@ -108,6 +108,7 @@ export const listLeasesSchema = {
             "expired"
         ]).optional(),
         propertyId: z.string().uuid().optional(),
+        unitId: z.string().uuid().optional(),
         page: z.coerce.number().int().positive().optional(),
         limit: z.coerce.number().int().positive().optional()
     })

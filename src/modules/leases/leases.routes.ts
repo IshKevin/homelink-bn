@@ -110,6 +110,10 @@ router.use(authenticate);
  *         name: propertyId
  *         schema: { type: string, format: uuid }
  *       - in: query
+ *         name: unitId
+ *         description: A unit's full lease history (active + terminated) — "previous tenants"
+ *         schema: { type: string, format: uuid }
+ *       - in: query
  *         name: page
  *         schema: { type: integer }
  *       - in: query

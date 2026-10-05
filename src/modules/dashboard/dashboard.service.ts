@@ -163,8 +163,7 @@ export interface TenantDashboard {
     activeLease: {
         id: string;
         propertyTitle: string;
-        addressLine: string;
-        city: string;
+        location: string;
         rentAmount: number;
         startDate: string;
         endDate: string | null;
@@ -194,8 +193,7 @@ export async function getTenantDashboard(tenantId: string): Promise<TenantDashbo
         ? {
               id: activeLeaseRow.lease.id,
               propertyTitle: activeLeaseRow.property.title,
-              addressLine: activeLeaseRow.property.addressLine,
-              city: activeLeaseRow.property.city,
+              location: activeLeaseRow.property.location,
               rentAmount: Number(activeLeaseRow.lease.rentAmount),
               startDate: activeLeaseRow.lease.startDate,
               endDate: activeLeaseRow.lease.endDate,

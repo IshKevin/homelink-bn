@@ -25,10 +25,7 @@ export async function listPropertiesHandler(req: Request, res: Response) {
         status?: "available" | "occupied";
         approvalStatus?: "pending" | "approved" | "rejected";
         type?: "apartment" | "house" | "studio" | "condo" | "commercial" | "other";
-        category?: "residential" | "commercial";
-        city?: string;
-        minRent?: number;
-        maxRent?: number;
+        search?: string;
         ownerId?: string;
     };
 
@@ -38,10 +35,7 @@ export async function listPropertiesHandler(req: Request, res: Response) {
             status: query.status,
             approvalStatus: query.approvalStatus,
             type: query.type,
-            category: query.category,
-            city: query.city,
-            minRent: query.minRent,
-            maxRent: query.maxRent,
+            search: query.search,
             ownerId: query.ownerId
         },
         { limit, offset }
@@ -53,6 +47,31 @@ export async function listPropertiesHandler(req: Request, res: Response) {
 export async function getPropertyHandler(req: Request, res: Response) {
     const property = await propertiesService.getPropertyById(req.params["id"] as string, req.user!);
     return sendSuccess(res, { data: property });
+}
+
+export async function listFloorsHandler(req: Request, res: Response) {
+    const floors = await propertiesService.listFloors(req.params["id"] as string, req.user!);
+    return sendSuccess(res, { data: floors });
+}
+
+export async function updateFloorHandler(req: Request, res: Response) {
+    const floor = await propertiesService.updateFloor(
+        req.params["id"] as string,
+        req.params["floorId"] as string,
+        req.user!,
+        req.body
+    );
+    return sendSuccess(res, { message: "Floor updated", data: floor });
+}
+
+export async function listUnitsByFloorHandler(req: Request, res: Response) {
+    const units = await propertiesService.listUnitsByFloor(req.params["id"] as string, req.params["floorId"] as string, req.user!);
+    return sendSuccess(res, { data: units });
+}
+
+export async function getUnitHandler(req: Request, res: Response) {
+    const unit = await propertiesService.getUnitById(req.params["id"] as string, req.params["unitId"] as string, req.user!);
+    return sendSuccess(res, { data: unit });
 }
 
 export async function addPropertyImagesHandler(req: Request, res: Response) {

@@ -1,7 +1,7 @@
-import { and, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../database";
-import { leases, properties, propertyImages, propertyUnits, users } from "../../database/schema";
+import { floors, leases, properties, propertyImages, propertyUnits, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
 import { buildExcelBuffer, readExcelRows } from "../../services/excel.service";
@@ -13,56 +13,38 @@ export type Requester = Pick<Express.AuthUser, "id" | "role">;
 
 type PropertyRow = typeof properties.$inferSelect;
 type PropertyUnitRow = typeof propertyUnits.$inferSelect;
+type FloorRow = typeof floors.$inferSelect;
+
+/** 0 -> "Ground", N -> "Floor N" — the auto-naming convention for a newly created floor. */
+function floorName(index: number): string {
+    return index === 0 ? "Ground" : `Floor ${index}`;
+}
 
 export interface CreatePropertyInput {
     title: string;
-    description?: string;
     type: PropertyRow["type"];
-    category: PropertyRow["category"];
-    sizeSqm?: number;
-    unitsCount?: number;
-    upi?: string;
-    terms?: string[];
-    attributes?: { label: string; value: string }[];
-    addressLine: string;
-    city: string;
-    state?: string;
-    country: string;
-    postalCode?: string;
-    bedrooms?: number;
-    bathrooms?: number;
-    rentAmount: number;
-    rentConditions?: string;
+    location: string;
+    numberOfFloors: number;
     ownerId?: string;
 }
 
 export interface UpdatePropertyInput {
     title?: string;
-    description?: string;
     type?: PropertyRow["type"];
-    category?: PropertyRow["category"];
-    sizeSqm?: number;
-    unitsCount?: number;
-    upi?: string;
-    terms?: string[];
-    attributes?: { label: string; value: string }[];
-    addressLine?: string;
-    city?: string;
-    state?: string;
-    country?: string;
-    postalCode?: string;
-    bedrooms?: number;
-    bathrooms?: number;
-    rentAmount?: number;
-    rentConditions?: string;
+    location?: string;
     status?: PropertyRow["status"];
+}
+
+export interface UpdateFloorInput {
+    name?: string;
+    scale?: number;
 }
 
 export interface CreateUnitInput {
     label: string;
     unitType?: string;
     description?: string;
-    floor?: number;
+    floorId: string;
     bedrooms?: number;
     bathrooms?: number;
     rentAmount: number;
@@ -78,7 +60,7 @@ export interface UpdateUnitInput {
     label?: string;
     unitType?: string;
     description?: string;
-    floor?: number;
+    floorId?: string;
     bedrooms?: number;
     bathrooms?: number;
     rentAmount?: number;
@@ -87,8 +69,8 @@ export interface UpdateUnitInput {
 }
 
 export interface GenerateUnitsInput {
+    floorId: string;
     count: number;
-    floors?: number;
     unitType?: string;
     bedrooms?: number;
     bathrooms?: number;
@@ -106,10 +88,7 @@ export interface ListPropertiesFilters {
     status?: PropertyRow["status"] | undefined;
     approvalStatus?: PropertyRow["approvalStatus"] | undefined;
     type?: PropertyRow["type"] | undefined;
-    category?: PropertyRow["category"] | undefined;
-    city?: string | undefined;
-    minRent?: number | undefined;
-    maxRent?: number | undefined;
+    search?: string | undefined;
     ownerId?: string | undefined;
 }
 
@@ -179,7 +158,7 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
     // Guards against a double-submit, a retried request, or two open tabs all
     // creating the same listing — the actual cause of a real incident where a
     // flaky submit produced 5 copies of the same property. Scoped to this
-    // owner + title + address within a short window: long enough to absorb a
+    // owner + title + location within a short window: long enough to absorb a
     // retry, short enough that genuinely re-listing the same address later
     // (e.g. a new build on the same plot) still goes through.
     const [recentDuplicate] = await db
@@ -189,7 +168,7 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
             and(
                 eq(properties.ownerId, ownerId),
                 eq(properties.title, input.title),
-                eq(properties.addressLine, input.addressLine),
+                eq(properties.location, input.location),
                 gte(properties.createdAt, new Date(Date.now() - 10_000))
             )
         )
@@ -205,23 +184,9 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
                 ownerId,
                 agentId,
                 title: input.title,
-                description: input.description,
                 type: input.type,
-                category: input.category,
-                sizeSqm: input.sizeSqm !== undefined ? String(input.sizeSqm) : undefined,
-                unitsCount: input.unitsCount,
-                upi: input.upi,
-                terms: input.terms,
-                attributes: input.attributes,
-                addressLine: input.addressLine,
-                city: input.city,
-                state: input.state,
-                country: input.country,
-                postalCode: input.postalCode,
-                bedrooms: input.bedrooms !== undefined ? String(input.bedrooms) : undefined,
-                bathrooms: input.bathrooms !== undefined ? String(input.bathrooms) : undefined,
-                rentAmount: String(input.rentAmount),
-                rentConditions: input.rentConditions,
+                location: input.location,
+                numberOfFloors: input.numberOfFloors,
                 status: "available",
                 approvalStatus: "pending"
             })
@@ -229,14 +194,17 @@ export async function createProperty(creator: Requester, input: CreatePropertyIn
 
         if (!createdProperty) throw AppError.internal("Failed to create property");
 
-        await tx.insert(propertyUnits).values({
-            propertyId: createdProperty.id,
-            label: createdProperty.title,
-            bedrooms: createdProperty.bedrooms,
-            bathrooms: createdProperty.bathrooms,
-            rentAmount: createdProperty.rentAmount,
-            status: "available"
-        });
+        // One floor per the requested count, auto-named Ground/Floor 1/Floor 2/...
+        // — no units yet, those are added afterward via the floor-scoped
+        // create/generate endpoints below, matching the register-then-manage
+        // workflow this is built around.
+        await tx.insert(floors).values(
+            Array.from({ length: input.numberOfFloors }, (_, index) => ({
+                propertyId: createdProperty.id,
+                name: floorName(index),
+                index
+            }))
+        );
 
         return { property: createdProperty };
     });
@@ -252,13 +220,7 @@ export async function updateProperty(propertyId: string, requester: Requester, i
 
     await assertPropertyWriteAccess(property, requester);
 
-    const { bedrooms, bathrooms, rentAmount, sizeSqm, ...rest } = input;
-    const updates: Partial<typeof properties.$inferInsert> = { ...rest };
-    if (bedrooms !== undefined) updates.bedrooms = String(bedrooms);
-    if (bathrooms !== undefined) updates.bathrooms = String(bathrooms);
-    if (rentAmount !== undefined) updates.rentAmount = String(rentAmount);
-    if (sizeSqm !== undefined) updates.sizeSqm = String(sizeSqm);
-    updates.updatedAt = new Date();
+    const updates: Partial<typeof properties.$inferInsert> = { ...input, updatedAt: new Date() };
 
     const [updated] = await db.update(properties).set(updates).where(eq(properties.id, propertyId)).returning();
     if (!updated) throw AppError.notFound("Property not found");
@@ -303,10 +265,10 @@ export async function listProperties(
     if (filters.status) conditions.push(eq(properties.status, filters.status));
     if (filters.approvalStatus) conditions.push(eq(properties.approvalStatus, filters.approvalStatus));
     if (filters.type) conditions.push(eq(properties.type, filters.type));
-    if (filters.category) conditions.push(eq(properties.category, filters.category));
-    if (filters.city) conditions.push(ilike(properties.city, `%${filters.city}%`));
-    if (filters.minRent !== undefined) conditions.push(gte(properties.rentAmount, String(filters.minRent)));
-    if (filters.maxRent !== undefined) conditions.push(lte(properties.rentAmount, String(filters.maxRent)));
+    if (filters.search) {
+        const term = `%${filters.search}%`;
+        conditions.push(or(ilike(properties.title, term), ilike(properties.location, term))!);
+    }
     if (filters.ownerId) conditions.push(eq(properties.ownerId, filters.ownerId));
 
     if (requester.role === "owner") {
@@ -358,6 +320,63 @@ export async function getPropertyById(propertyId: string, requester: Requester) 
     };
 }
 
+async function getFloorOrThrow(propertyId: string, floorId: string): Promise<FloorRow> {
+    const [floor] = await db.select().from(floors).where(eq(floors.id, floorId)).limit(1);
+    if (!floor || floor.propertyId !== propertyId) throw AppError.notFound("Floor not found");
+    return floor;
+}
+
+export async function listFloors(propertyId: string, requester: Requester) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+
+    await assertTenantPropertyReadAccess(propertyRow, requester);
+
+    const rows = await db.select().from(floors).where(eq(floors.propertyId, propertyId)).orderBy(floors.index);
+
+    const counts = await db
+        .select({ floorId: propertyUnits.floorId, count: sql<number>`count(*)::int` })
+        .from(propertyUnits)
+        .where(and(eq(propertyUnits.propertyId, propertyId), isNull(propertyUnits.deletedAt)))
+        .groupBy(propertyUnits.floorId);
+    const countByFloor = new Map(counts.map((c) => [c.floorId, c.count]));
+
+    return rows.map((floor) => ({ ...floor, unitsCount: countByFloor.get(floor.id) ?? 0 }));
+}
+
+export async function updateFloor(propertyId: string, floorId: string, requester: Requester, input: UpdateFloorInput) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+
+    await assertPropertyWriteAccess(propertyRow, requester);
+    await getFloorOrThrow(propertyId, floorId);
+
+    const updates: Partial<typeof floors.$inferInsert> = { updatedAt: new Date() };
+    if (input.name !== undefined) updates.name = input.name;
+    if (input.scale !== undefined) updates.scale = String(input.scale);
+
+    const [updated] = await db.update(floors).set(updates).where(eq(floors.id, floorId)).returning();
+    if (!updated) throw AppError.internal("Failed to update floor");
+
+    await recordAction({ userId: requester.id, action: "property.floor.update", entity: "property", entityId: propertyId, metadata: { floorId } });
+
+    return updated;
+}
+
+export async function listUnitsByFloor(propertyId: string, floorId: string, requester: Requester) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+
+    await assertTenantPropertyReadAccess(propertyRow, requester);
+    await getFloorOrThrow(propertyId, floorId);
+
+    return db
+        .select()
+        .from(propertyUnits)
+        .where(and(eq(propertyUnits.floorId, floorId), isNull(propertyUnits.deletedAt)))
+        .orderBy(desc(propertyUnits.createdAt));
+}
+
 export async function recomputePropertyStatus(propertyId: string): Promise<void> {
     const units = await db
         .select()
@@ -407,6 +426,7 @@ export async function createUnit(propertyId: string, requester: Requester, input
     if (!propertyRow) throw AppError.notFound("Property not found");
 
     await assertPropertyWriteAccess(propertyRow, requester);
+    await getFloorOrThrow(propertyId, input.floorId);
     await assertNoDuplicateLabel(propertyId, input.label);
 
     const [unit] = await db
@@ -416,7 +436,7 @@ export async function createUnit(propertyId: string, requester: Requester, input
             label: input.label,
             unitType: input.unitType,
             description: input.description,
-            floor: input.floor,
+            floorId: input.floorId,
             bedrooms: input.bedrooms !== undefined ? String(input.bedrooms) : undefined,
             bathrooms: input.bathrooms !== undefined ? String(input.bathrooms) : undefined,
             rentAmount: String(input.rentAmount),
@@ -446,6 +466,42 @@ export async function listUnits(propertyId: string, requester: Requester) {
         .orderBy(desc(propertyUnits.createdAt));
 }
 
+/**
+ * Single-unit detail view — the unit itself plus its floor and (if occupied)
+ * its current tenant, so a landlord clicking into one unit sees everything
+ * at a glance. Payment/maintenance/lease history live behind their own
+ * `unitId`-filtered endpoints rather than being inlined here, same pattern
+ * the rest of this app already uses for "related data" instead of building
+ * combined payloads.
+ */
+export async function getUnitById(propertyId: string, unitId: string, requester: Requester) {
+    const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
+    if (!propertyRow) throw AppError.notFound("Property not found");
+
+    await assertTenantPropertyReadAccess(propertyRow, requester);
+
+    const unit = await getUnitOrThrow(unitId);
+    if (unit.propertyId !== propertyId) throw AppError.notFound("Unit not found");
+
+    // "occupied" doesn't guarantee lease.status === "active" — a unit becomes
+    // occupied the moment a lease is assigned, before signatures (see
+    // leases.service.ts's createLease) — so the "current" lease is whichever
+    // one hasn't reached a terminal state yet, not strictly the active one.
+    const [floor, [currentLease]] = await Promise.all([
+        unit.floorId ? db.select().from(floors).where(eq(floors.id, unit.floorId)).limit(1).then((r) => r[0]) : undefined,
+        unit.status === "occupied"
+            ? db
+                  .select({ id: leases.id, tenantId: leases.tenantId, status: leases.status, startDate: leases.startDate, endDate: leases.endDate })
+                  .from(leases)
+                  .where(and(eq(leases.unitId, unitId), notInArray(leases.status, ["terminated", "expired"])))
+                  .orderBy(desc(leases.createdAt))
+                  .limit(1)
+            : []
+    ]);
+
+    return { ...unit, floor, currentLease };
+}
+
 export async function updateUnit(propertyId: string, unitId: string, requester: Requester, input: UpdateUnitInput) {
     const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!propertyRow) throw AppError.notFound("Property not found");
@@ -457,6 +513,9 @@ export async function updateUnit(propertyId: string, unitId: string, requester: 
 
     if (input.label && input.label !== unit.label) {
         await assertNoDuplicateLabel(propertyId, input.label, unitId);
+    }
+    if (input.floorId) {
+        await getFloorOrThrow(propertyId, input.floorId);
     }
 
     // "occupied" isn't reachable through here at all — UpdateUnitInput's
@@ -512,48 +571,37 @@ export async function deleteUnit(propertyId: string, unitId: string, requester: 
 }
 
 /**
- * Bulk-creates units with a shared default price/bedrooms/bathrooms — for
- * buildings where entering each unit by hand isn't practical. The owner
- * edits individual unit prices afterward via the existing updateUnit above;
- * this deliberately doesn't take a per-unit price list (see
+ * Bulk-creates `count` units on one floor with a shared default
+ * price/bedrooms/bathrooms — for buildings where entering each unit by hand
+ * isn't practical. Called once per floor (e.g. Ground=7, Floor 1=10, Floor
+ * 2=8) rather than taking a floor count itself, since floors are now real
+ * entities created at property registration, not synthesized here. The
+ * owner edits individual unit prices afterward via the existing updateUnit
+ * above; this deliberately doesn't take a per-unit price list (see
  * importUnitsFromExcel for that).
  */
 export async function generateUnits(propertyId: string, requester: Requester, input: GenerateUnitsInput) {
     const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!propertyRow) throw AppError.notFound("Property not found");
     await assertPropertyWriteAccess(propertyRow, requester);
+    const floor = await getFloorOrThrow(propertyId, input.floorId);
 
     const bedrooms = input.bedrooms !== undefined ? String(input.bedrooms) : undefined;
     const bathrooms = input.bathrooms !== undefined ? String(input.bathrooms) : undefined;
     const rentAmount = String(input.rentAmount);
     const deposit = input.deposit !== undefined ? String(input.deposit) : undefined;
 
-    const values: (typeof propertyUnits.$inferInsert)[] = [];
-    if (input.floors) {
-        const unitsPerFloor = Math.ceil(input.count / input.floors);
-        let remaining = input.count;
-        for (let floor = 1; floor <= input.floors && remaining > 0; floor++) {
-            const onThisFloor = Math.min(unitsPerFloor, remaining);
-            for (let unit = 1; unit <= onThisFloor; unit++) {
-                values.push({
-                    propertyId,
-                    label: `Floor ${floor} - Unit ${unit}`,
-                    unitType: input.unitType,
-                    floor,
-                    bedrooms,
-                    bathrooms,
-                    rentAmount,
-                    deposit,
-                    status: "available"
-                });
-            }
-            remaining -= onThisFloor;
-        }
-    } else {
-        for (let unit = 1; unit <= input.count; unit++) {
-            values.push({ propertyId, label: `Unit ${unit}`, unitType: input.unitType, bedrooms, bathrooms, rentAmount, deposit, status: "available" });
-        }
-    }
+    const values: (typeof propertyUnits.$inferInsert)[] = Array.from({ length: input.count }, (_, i) => ({
+        propertyId,
+        label: `${floor.name} - Unit ${i + 1}`,
+        unitType: input.unitType,
+        floorId: floor.id,
+        bedrooms,
+        bathrooms,
+        rentAmount,
+        deposit,
+        status: "available"
+    }));
 
     const duplicates = await findDuplicateLabels(propertyId, values.map((v) => v.label));
     if (duplicates.length > 0) {
@@ -579,7 +627,10 @@ const importUnitRowSchema = z.object({
     label: z.union([z.string(), z.number()]).transform(String).pipe(z.string().min(1).max(100)),
     unitType: z.string().max(100).optional(),
     description: z.string().max(2000).optional(),
-    floor: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int()).optional(),
+    // Resolved against the property's existing floor names (case-insensitive)
+    // in parseUnitsWorkbook below — floors must already exist (created at
+    // property registration), this just matches a row to one by name.
+    floor: z.union([z.string(), z.number()]).transform(String).pipe(z.string().min(1)),
     bedrooms: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int().nonnegative()).optional(),
     bathrooms: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().int().nonnegative()).optional(),
     rentAmount: z.union([z.string(), z.number()]).transform(Number).pipe(z.number().positive()),
@@ -617,6 +668,9 @@ async function parseUnitsWorkbook(propertyId: string, fileBuffer: Buffer): Promi
         throw AppError.badRequest("The uploaded file has no data rows");
     }
 
+    const propertyFloors = await db.select().from(floors).where(eq(floors.propertyId, propertyId));
+    const floorIdByName = new Map(propertyFloors.map((f) => [f.name.toLowerCase(), f.id]));
+
     const values: (typeof propertyUnits.$inferInsert)[] = [];
     const errors: ImportUnitRowError[] = [];
     const labelsSeenInFile = new Map<string, number>(); // label -> first row number seen
@@ -647,12 +701,18 @@ async function parseUnitsWorkbook(propertyId: string, fileBuffer: Buffer): Promi
         }
         labelsSeenInFile.set(result.data.label, rowNumber);
 
+        const floorId = floorIdByName.get(result.data.floor.toLowerCase());
+        if (!floorId) {
+            errors.push({ row: rowNumber, message: `Floor "${result.data.floor}" does not exist on this property` });
+            return;
+        }
+
         values.push({
             propertyId,
             label: result.data.label,
             unitType: result.data.unitType,
             description: result.data.description,
-            floor: result.data.floor,
+            floorId,
             bedrooms: result.data.bedrooms !== undefined ? String(result.data.bedrooms) : undefined,
             bathrooms: result.data.bathrooms !== undefined ? String(result.data.bathrooms) : undefined,
             rentAmount: String(result.data.rentAmount),
@@ -709,7 +769,7 @@ export async function getUnitsImportTemplate(): Promise<Buffer> {
         {
             label: "A001",
             unitType: "2 Bedroom",
-            floor: 1,
+            floor: "Ground",
             bedrooms: 2,
             bathrooms: 1,
             rentAmount: 150000,
@@ -783,14 +843,14 @@ export async function listAvailableUnits(requester: Requester, filters: ListAvai
             label: propertyUnits.label,
             unitType: propertyUnits.unitType,
             description: propertyUnits.description,
-            floor: propertyUnits.floor,
+            floorId: propertyUnits.floorId,
             bedrooms: propertyUnits.bedrooms,
             bathrooms: propertyUnits.bathrooms,
             rentAmount: propertyUnits.rentAmount,
             deposit: propertyUnits.deposit,
             status: propertyUnits.status,
             propertyTitle: properties.title,
-            propertyAddressLine: properties.addressLine
+            propertyLocation: properties.location
         })
         .from(propertyUnits)
         .innerJoin(properties, eq(propertyUnits.propertyId, properties.id))

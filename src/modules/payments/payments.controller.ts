@@ -30,6 +30,11 @@ export async function payInvoiceHandler(req: Request, res: Response) {
     return sendSuccess(res, { statusCode: 201, message: "Payment initiated", data: payment });
 }
 
+export async function recordPaymentHandler(req: Request, res: Response) {
+    const payment = await paymentsService.recordPayment(req.params["id"] as string, req.user!, req.body);
+    return sendSuccess(res, { statusCode: 201, message: "Payment recorded", data: payment });
+}
+
 export async function listPaymentsHandler(req: Request, res: Response) {
     const { page, limit, offset } = getPagination(req);
     const query = req.query as {

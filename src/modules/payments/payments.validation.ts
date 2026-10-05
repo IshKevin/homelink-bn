@@ -9,6 +9,12 @@ export const payInvoiceSchema = {
     })
 };
 
+export const recordPaymentSchema = {
+    body: z.object({
+        method: z.enum(["bank_transfer", "cash"])
+    })
+};
+
 export const rejectPaymentSchema = {
     body: z.object({
         reason: z.string().min(3).max(5000)

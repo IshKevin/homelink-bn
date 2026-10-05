@@ -13,6 +13,7 @@ type PropertyRow = typeof properties.$inferSelect;
 
 export interface CreateMaintenanceRequestInput {
     propertyId: string;
+    unitId?: string | undefined;
     title: string;
     description: string;
     priority?: MaintenanceRequestRow["priority"] | undefined;
@@ -21,6 +22,7 @@ export interface CreateMaintenanceRequestInput {
 export interface ListMaintenanceRequestsFilters {
     status?: MaintenanceRequestRow["status"] | undefined;
     propertyId?: string | undefined;
+    unitId?: string | undefined;
 }
 
 export interface CompleteMaintenanceRequestInput {
@@ -100,6 +102,7 @@ export async function createMaintenanceRequest(tenant: Requester, input: CreateM
         .insert(maintenanceRequests)
         .values({
             propertyId: property.id,
+            unitId: input.unitId,
             tenantId: tenant.id,
             title: input.title,
             description: input.description,
@@ -148,6 +151,7 @@ export async function listMaintenanceRequests(
     const conditions = [];
     if (filters.status) conditions.push(eq(maintenanceRequests.status, filters.status));
     if (filters.propertyId) conditions.push(eq(maintenanceRequests.propertyId, filters.propertyId));
+    if (filters.unitId) conditions.push(eq(maintenanceRequests.unitId, filters.unitId));
 
     if (requester.role === "tenant") {
         conditions.push(eq(maintenanceRequests.tenantId, requester.id));

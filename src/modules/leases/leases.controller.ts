@@ -22,11 +22,12 @@ export async function listLeasesHandler(req: Request, res: Response) {
             | "terminated"
             | "expired";
         propertyId?: string;
+        unitId?: string;
     };
 
     const { rows, total } = await leasesService.listLeases(
         req.user!,
-        { status: query.status, propertyId: query.propertyId },
+        { status: query.status, propertyId: query.propertyId, unitId: query.unitId },
         { limit, offset }
     );
 

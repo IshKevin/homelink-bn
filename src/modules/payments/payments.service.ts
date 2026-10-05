@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { format } from "date-fns";
 import { db } from "../../database";
-import { invoices, leases, payments } from "../../database/schema";
+import { invoices, leases, payments, properties } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { getPaymentProvider } from "../../services/payments/payment.service";
 import { renderHtmlToPdf } from "../../services/pdf.service";
@@ -43,6 +43,10 @@ export interface PayInvoiceInput {
     payerAccount?: string | undefined;
 }
 
+export interface RecordPaymentInput {
+    method: "cash" | "bank_transfer";
+}
+
 async function assertInvoiceAccess(lease: LeaseRow, requester: Requester): Promise<void> {
     if (isAdminRole(requester.role) || requester.id === lease.tenantId || requester.id === lease.ownerId) return;
     if (requester.role === "house_manager" && lease.ownerId === (await resolveEffectiveOwnerId(requester))) return;
@@ -53,6 +57,26 @@ async function assertLeaseOwnerAccess(lease: LeaseRow, requester: Requester): Pr
     if (isAdminRole(requester.role) || requester.id === lease.ownerId) return;
     if (requester.role === "house_manager" && lease.ownerId === (await resolveEffectiveOwnerId(requester))) return;
     throw AppError.forbidden("You do not have permission to act on this payment");
+}
+
+/**
+ * Same as assertLeaseOwnerAccess, plus the agent assigned to the lease's
+ * property (properties.agentId) — needed for landlord/agent-initiated
+ * manual payments, where an agent acting for the owner is explicitly in
+ * scope even though they're not in scope for payment approve/reject.
+ */
+async function assertLeasePaymentRecordAccess(lease: LeaseRow, requester: Requester): Promise<void> {
+    if (isAdminRole(requester.role) || requester.id === lease.ownerId) return;
+    if (requester.role === "house_manager" && lease.ownerId === (await resolveEffectiveOwnerId(requester))) return;
+    if (requester.role === "agent") {
+        const [property] = await db
+            .select({ agentId: properties.agentId })
+            .from(properties)
+            .where(eq(properties.id, lease.propertyId))
+            .limit(1);
+        if (property?.agentId === requester.id) return;
+    }
+    throw AppError.forbidden("You do not have permission to record a payment for this lease");
 }
 
 async function getInvoiceWithLeaseOrThrow(invoiceId: string): Promise<{ invoice: InvoiceRow; lease: LeaseRow }> {
@@ -344,6 +368,54 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
         entity: "payment",
         entityId: payment.id,
         metadata: { status: result.status }
+    });
+
+    return finalPayment;
+}
+
+/**
+ * A landlord or agent recording a payment they already collected in
+ * person (cash handed over, or a bank deposit they've confirmed) —
+ * distinct from payInvoice, which is the tenant's own self-service path.
+ * The recorder IS the approving party here, so this goes straight to
+ * "success" via markPaymentSuccess instead of sitting "pending" approval.
+ */
+export async function recordPayment(invoiceId: string, requester: Requester, input: RecordPaymentInput) {
+    const { invoice, lease } = await getInvoiceWithLeaseOrThrow(invoiceId);
+    await assertLeasePaymentRecordAccess(lease, requester);
+
+    if (invoice.status === "paid") {
+        throw AppError.conflict("Invoice is already paid");
+    }
+
+    const paymentNumber = await nextDocumentNumber("ACC-PAY");
+    const [payment] = await db
+        .insert(payments)
+        .values({
+            paymentNumber,
+            invoiceId: invoice.id,
+            tenantId: lease.tenantId,
+            amount: invoice.amountDue,
+            method: input.method,
+            provider: input.method,
+            providerReference: `MANUAL-${crypto.randomUUID()}`,
+            status: "pending",
+            approvalStatus: "approved",
+            approvedBy: requester.id,
+            approvedAt: new Date()
+        })
+        .returning();
+
+    if (!payment) throw AppError.internal("Failed to record payment");
+
+    const finalPayment = await markPaymentSuccess(payment.id);
+
+    await recordAction({
+        userId: requester.id,
+        action: "payment.record",
+        entity: "payment",
+        entityId: payment.id,
+        metadata: { method: input.method, invoiceId: invoice.id, tenantId: lease.tenantId }
     });
 
     return finalPayment;

@@ -35,6 +35,7 @@ router.use(authenticate);
  *       required: [propertyId, title, description]
  *       properties:
  *         propertyId: { type: string, format: uuid }
+ *         unitId: { type: string, format: uuid, description: "Optional — ties the request to a specific unit rather than the property generally" }
  *         title: { type: string, example: "Leaking kitchen faucet" }
  *         description: { type: string, example: "The kitchen faucet has been leaking for two days." }
  *         priority: { type: string, enum: [low, medium, high], description: "Defaults to medium" }
@@ -69,6 +70,10 @@ router.use(authenticate);
  *         schema: { type: string, enum: [submitted, assigned, in_progress, completed] }
  *       - in: query
  *         name: propertyId
+ *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: unitId
+ *         description: A unit's maintenance history — items/labor cost on each row is the basis for that unit's "expenses"
  *         schema: { type: string, format: uuid }
  *       - in: query
  *         name: page

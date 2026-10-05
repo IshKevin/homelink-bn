@@ -343,4 +343,87 @@ describe("Payments module", () => {
             expect(approveRes.status).toBe(403);
         });
     });
+
+    describe("POST /api/v1/invoices/:id/record-payment", () => {
+        it("lets the owner record a cash payment, already approved, invoice marked paid immediately", async () => {
+            const { ownerToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const res = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/record-payment`)
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ method: "cash" });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.status).toBe("success");
+            expect(res.body.data.approvalStatus).toBe("approved");
+            expect(res.body.data.receiptUrl).toBeTruthy();
+
+            const invoiceRes = await testRequest()
+                .get(`/api/v1/invoices/${invoice.id}`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(invoiceRes.body.data.status).toBe("paid");
+        });
+
+        it("lets an agent assigned to the property record a bank_transfer payment", async () => {
+            const { user: owner } = await createAuthedUser({ role: "owner" });
+            const { user: agent, accessToken: agentToken } = await createAuthedUser({ role: "agent" });
+            const property = await createProperty({ ownerId: owner.id, agentId: agent.id, approvalStatus: "approved" });
+            const { user: tenant } = await createAuthedUser({ role: "tenant" });
+            const lease = await createLease({ propertyId: property.id, tenantId: tenant.id, ownerId: owner.id, status: "active" });
+            const invoice = await createInvoice({ leaseId: lease.id, amountDue: "1500.00", status: "unpaid" });
+
+            const res = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/record-payment`)
+                .set("Authorization", `Bearer ${agentToken}`)
+                .send({ method: "bank_transfer" });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.status).toBe("success");
+        });
+
+        it("forbids an agent not assigned to the property from recording a payment", async () => {
+            const { tenantToken: _unused, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+            const { accessToken: unrelatedAgentToken } = await createAuthedUser({ role: "agent" });
+
+            const res = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/record-payment`)
+                .set("Authorization", `Bearer ${unrelatedAgentToken}`)
+                .send({ method: "cash" });
+
+            expect(res.status).toBe(403);
+        });
+
+        it("forbids a tenant from recording their own payment through this endpoint", async () => {
+            const { tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const res = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/record-payment`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "cash" });
+
+            expect(res.status).toBe(403);
+        });
+
+        it("rejects mobile_money as a method, since that must go through the real provider flow", async () => {
+            const { ownerToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const res = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/record-payment`)
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ method: "mobile_money" });
+
+            expect(res.status).toBe(400);
+        });
+
+        it("returns 409 when the invoice is already paid", async () => {
+            const { ownerToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00", invoiceStatus: "paid" });
+
+            const res = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/record-payment`)
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({ method: "cash" });
+
+            expect(res.status).toBe(409);
+        });
+    });
 });

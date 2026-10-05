@@ -70,6 +70,7 @@ async function isEffectiveLeaseOwner(lease: LeaseRow, requester: Requester): Pro
 export interface ListLeasesFilters {
     status?: LeaseRow["status"] | undefined;
     propertyId?: string | undefined;
+    unitId?: string | undefined;
 }
 
 export interface RequestChangeInput {
@@ -138,7 +139,7 @@ function buildLeaseHtml(lease: LeaseRow, property: PropertyRow): string {
                 <h1>Lease Agreement</h1>
                 <table>
                     <tr><td>Lease ID</td><td>${lease.id}</td></tr>
-                    <tr><td>Property</td><td>${property.title} - ${property.addressLine}, ${property.city}</td></tr>
+                    <tr><td>Property</td><td>${property.title} - ${property.location}</td></tr>
                     <tr><td>Start Date</td><td>${lease.startDate}</td></tr>
                     <tr><td>End Date</td><td>${lease.endDate}</td></tr>
                     <tr><td>Rent Amount</td><td>${lease.rentAmount}</td></tr>
@@ -306,6 +307,7 @@ export async function listLeases(
     const conditions = [];
     if (filters.status) conditions.push(eq(leases.status, filters.status));
     if (filters.propertyId) conditions.push(eq(leases.propertyId, filters.propertyId));
+    if (filters.unitId) conditions.push(eq(leases.unitId, filters.unitId));
 
     let rows: (typeof leases.$inferSelect)[];
     let total: number;
@@ -409,7 +411,7 @@ export interface LeaseStatementRow {
 }
 
 export interface LeaseStatement {
-    property: { title: string; addressLine: string; city: string };
+    property: { title: string; location: string };
     unit: { label: string };
     tenant: { firstName: string; lastName: string; email: string };
     owner: { firstName: string; lastName: string };
@@ -497,7 +499,7 @@ export async function getLeaseStatement(
     const totalCredit = rows.reduce((sum, row) => sum + row.credit, 0);
 
     return {
-        property: { title: property.title, addressLine: property.addressLine, city: property.city },
+        property: { title: property.title, location: property.location },
         unit: { label: unit.label },
         tenant: { firstName: tenant.firstName, lastName: tenant.lastName, email: tenant.email },
         owner: { firstName: owner.firstName, lastName: owner.lastName },
@@ -601,7 +603,7 @@ export function buildLeaseStatementHtml(statement: LeaseStatement): string {
 
                 <div class="meta">
                     <div>
-                        <div><b>Property:</b> ${statement.property.title} — ${statement.property.addressLine}, ${statement.property.city}</div>
+                        <div><b>Property:</b> ${statement.property.title} — ${statement.property.location}</div>
                         <div><b>Unit:</b> ${statement.unit.label}</div>
                     </div>
                     <div>

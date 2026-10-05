@@ -13,11 +13,12 @@ export async function listMaintenanceRequestsHandler(req: Request, res: Response
     const query = req.query as {
         status?: "submitted" | "assigned" | "in_progress" | "completed";
         propertyId?: string;
+        unitId?: string;
     };
 
     const { rows, total } = await maintenanceService.listMaintenanceRequests(
         req.user!,
-        { status: query.status, propertyId: query.propertyId },
+        { status: query.status, propertyId: query.propertyId, unitId: query.unitId },
         { limit, offset }
     );
 

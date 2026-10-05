@@ -1,7 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { eq } from "drizzle-orm";
 import { db } from "../../src/database";
-import { invoices, leases, maintenanceRequests, payments, properties, propertyUnits, users } from "../../src/database/schema";
+import { floors, invoices, leases, maintenanceRequests, payments, properties, propertyUnits, users } from "../../src/database/schema";
 import { hashPassword } from "../../src/common/utils/password.util";
 import { signAccessToken } from "../../src/common/utils/jwt.util";
 import { nextDocumentNumber } from "../../src/common/utils/sequence.util";
@@ -52,27 +52,21 @@ export interface CreatePropertyOverrides {
     ownerId: string;
     agentId?: string | null;
     title?: string;
-    description?: string;
     type?: "apartment" | "house" | "studio" | "condo" | "commercial" | "other";
-    category?: "residential" | "commercial";
-    sizeSqm?: number;
-    unitsCount?: number;
-    addressLine?: string;
-    city?: string;
-    state?: string;
-    country?: string;
-    postalCode?: string;
-    bedrooms?: number;
-    bathrooms?: number;
-    rentAmount?: number;
-    rentConditions?: string;
+    location?: string;
+    numberOfFloors?: number;
     status?: "available" | "occupied";
     approvalStatus?: "pending" | "approved" | "rejected";
     isActive?: boolean;
+    // Convenience only — not a real property field. Sets the auto-created
+    // Ground floor's single default unit's bedrooms/bathrooms/rentAmount, so
+    // existing tests that asserted on a property's "default unit" still can.
+    rentAmount?: number;
+    bedrooms?: number;
+    bathrooms?: number;
 }
 
 export async function createProperty(overrides: CreatePropertyOverrides) {
-    const type = overrides.type ?? "apartment";
     const bedrooms = overrides.bedrooms !== undefined ? String(overrides.bedrooms) : "2";
     const bathrooms = overrides.bathrooms !== undefined ? String(overrides.bathrooms) : "1";
     const rentAmount = overrides.rentAmount !== undefined ? String(overrides.rentAmount) : "1000";
@@ -83,20 +77,9 @@ export async function createProperty(overrides: CreatePropertyOverrides) {
             ownerId: overrides.ownerId,
             agentId: overrides.agentId ?? undefined,
             title: overrides.title ?? faker.lorem.words(3),
-            description: overrides.description ?? faker.lorem.sentence(),
-            type,
-            category: overrides.category ?? (type === "commercial" ? "commercial" : "residential"),
-            sizeSqm: overrides.sizeSqm !== undefined ? String(overrides.sizeSqm) : type === "commercial" ? "100" : undefined,
-            unitsCount: overrides.unitsCount,
-            addressLine: overrides.addressLine ?? faker.location.streetAddress(),
-            city: overrides.city ?? faker.location.city(),
-            state: overrides.state ?? faker.location.state(),
-            country: overrides.country ?? faker.location.country(),
-            postalCode: overrides.postalCode ?? faker.location.zipCode(),
-            bedrooms,
-            bathrooms,
-            rentAmount,
-            rentConditions: overrides.rentConditions,
+            type: overrides.type ?? "apartment",
+            location: overrides.location ?? `${faker.location.streetAddress()}, ${faker.location.city()}`,
+            numberOfFloors: overrides.numberOfFloors ?? 1,
             status: overrides.status ?? "available",
             approvalStatus: overrides.approvalStatus ?? "pending",
             isActive: overrides.isActive ?? true
@@ -105,8 +88,23 @@ export async function createProperty(overrides: CreatePropertyOverrides) {
 
     if (!property) throw new Error("Failed to create test property");
 
+    const floorCount = overrides.numberOfFloors ?? 1;
+    const createdFloors = await db
+        .insert(floors)
+        .values(
+            Array.from({ length: floorCount }, (_, index) => ({
+                propertyId: property.id,
+                name: index === 0 ? "Ground" : `Floor ${index}`,
+                index
+            }))
+        )
+        .returning();
+    const groundFloor = createdFloors.find((f) => f.index === 0);
+    if (!groundFloor) throw new Error("Failed to create test property's ground floor");
+
     await db.insert(propertyUnits).values({
         propertyId: property.id,
+        floorId: groundFloor.id,
         label: property.title,
         bedrooms,
         bathrooms,
@@ -121,9 +119,15 @@ async function getOrCreateUnit(propertyId: string): Promise<string> {
     const [existing] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, propertyId)).limit(1);
     if (existing) return existing.id;
 
+    let [groundFloor] = await db.select().from(floors).where(eq(floors.propertyId, propertyId)).limit(1);
+    if (!groundFloor) {
+        [groundFloor] = await db.insert(floors).values({ propertyId, name: "Ground", index: 0 }).returning();
+    }
+    if (!groundFloor) throw new Error("Failed to create test property's ground floor");
+
     const [unit] = await db
         .insert(propertyUnits)
-        .values({ propertyId, label: "Unit 1", rentAmount: "1000", status: "available" })
+        .values({ propertyId, floorId: groundFloor.id, label: "Unit 1", rentAmount: "1000", status: "available" })
         .returning();
     if (!unit) throw new Error("Failed to create test unit");
     return unit.id;
@@ -235,6 +239,7 @@ export async function createPayment(overrides: CreatePaymentOverrides) {
 
 export interface CreateMaintenanceRequestOverrides {
     propertyId: string;
+    unitId?: string;
     tenantId: string;
     title?: string;
     description?: string;
@@ -252,6 +257,7 @@ export async function createMaintenanceRequest(overrides: CreateMaintenanceReque
         .insert(maintenanceRequests)
         .values({
             propertyId: overrides.propertyId,
+            unitId: overrides.unitId,
             tenantId: overrides.tenantId,
             title: overrides.title ?? faker.lorem.words(4),
             description: overrides.description ?? faker.lorem.sentence(),

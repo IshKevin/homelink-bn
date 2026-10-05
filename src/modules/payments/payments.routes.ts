@@ -3,7 +3,13 @@ import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
 import { ADMIN_ROLES } from "../../common/constants/roles";
-import { listInvoicesSchema, listPaymentsSchema, payInvoiceSchema, rejectPaymentSchema } from "./payments.validation";
+import {
+    listInvoicesSchema,
+    listPaymentsSchema,
+    payInvoiceSchema,
+    recordPaymentSchema,
+    rejectPaymentSchema
+} from "./payments.validation";
 import {
     approvePaymentHandler,
     exportPaymentsHandler,
@@ -12,6 +18,7 @@ import {
     listInvoicesHandler,
     listPaymentsHandler,
     payInvoiceHandler,
+    recordPaymentHandler,
     rejectPaymentHandler
 } from "./payments.controller";
 
@@ -137,6 +144,56 @@ invoicesRouter.get("/:id", authorize("tenant", "owner", "house_manager", ...ADMI
  *               $ref: '#/components/schemas/ApiError'
  */
 invoicesRouter.post("/:id/pay", authorize("tenant"), validate(payInvoiceSchema), payInvoiceHandler);
+
+/**
+ * @openapi
+ * components:
+ *   schemas:
+ *     RecordPaymentInput:
+ *       type: object
+ *       required: [method]
+ *       properties:
+ *         method: { type: string, enum: [cash, bank_transfer], description: "A payment the landlord/agent already collected or confirmed in person — recorded as already approved, not held pending approval like a tenant-initiated cash/bank_transfer payment" }
+ * /invoices/{id}/record-payment:
+ *   post:
+ *     tags: [Payments]
+ *     summary: Record a payment collected in person (owner, agent assigned to the property, house manager, or admin) — marks the invoice paid immediately
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { $ref: '#/components/schemas/RecordPaymentInput' }
+ *     responses:
+ *       201:
+ *         description: Payment recorded and invoice marked paid
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       403:
+ *         description: You do not have permission to record a payment for this lease
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ *       409:
+ *         description: Invoice is already paid
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+invoicesRouter.post(
+    "/:id/record-payment",
+    authorize("owner", "agent", "house_manager", ...ADMIN_ROLES),
+    validate(recordPaymentSchema),
+    recordPaymentHandler
+);
 
 /**
  * @openapi

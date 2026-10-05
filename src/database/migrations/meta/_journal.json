@@ -85,6 +85,13 @@
       "when": 1789136193789,
       "tag": "0011_fresh_network",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791151540570,
+      "tag": "0012_bouncy_pete_wisdom",
+      "breakpoints": true
     }
   ]
 }

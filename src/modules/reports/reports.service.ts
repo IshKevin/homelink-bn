@@ -72,7 +72,7 @@ export async function getRentalHistoryReport(requester: Requester, { from, to }:
 
     const reportRows = rows.map((r) => ({
         Property: r.property.title,
-        Address: `${r.property.addressLine}, ${r.property.city}`,
+        Address: r.property.location,
         StartDate: r.lease.startDate,
         EndDate: r.lease.endDate,
         RentAmount: r.lease.rentAmount,

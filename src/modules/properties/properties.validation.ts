@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 const propertyTypeValues = ["apartment", "house", "studio", "condo", "commercial", "other"] as const;
-const propertyCategoryValues = ["residential", "commercial"] as const;
 
 // Unbounded z.string() lets any authenticated user submit a multi-hundred-MB
 // payload on every request, bloating Postgres storage/WAL and anything that
@@ -10,105 +9,34 @@ const propertyCategoryValues = ["residential", "commercial"] as const;
 const shortText = (max = 255) => z.string().min(1).max(max);
 const longText = (max = 5000) => z.string().min(1).max(max);
 
-function checkCategoryTypeConsistency(
-    data: {
-        category?: string | undefined;
-        type?: string | undefined;
-        sizeSqm?: number | undefined;
-        unitsCount?: number | undefined;
-    },
-    ctx: z.RefinementCtx,
-    { requireFields }: { requireFields: boolean }
-) {
-    if (data.category === "commercial") {
-        if (data.type !== undefined && data.type !== "commercial") {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "Commercial properties must use type 'commercial'",
-                path: ["type"]
-            });
-        }
-        if (requireFields && data.sizeSqm === undefined) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "sizeSqm is required for commercial properties",
-                path: ["sizeSqm"]
-            });
-        }
-    } else if (data.category === "residential") {
-        if (data.type === "commercial") {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "Residential properties cannot use type 'commercial'",
-                path: ["type"]
-            });
-        }
-        // unitsCount is deliberately NOT required here, even for apartments —
-        // it's just a reference/planning number, disconnected from the real
-        // PropertyUnit records created via Manage Units. Requiring it at
-        // create time blocked every apartment-type property from ever being
-        // created once the frontend stopped collecting it (confirmed live:
-        // every create hit this 400 "Validation failed" unless the type was
-        // changed away from the default "apartment").
-    }
-}
-
-const attributeSchema = z.object({
-    label: shortText(),
-    value: shortText()
-});
-
 export const createPropertySchema = {
-    body: z
-        .object({
-            title: shortText(),
-            description: longText().optional(),
-            type: z.enum(propertyTypeValues),
-            category: z.enum(propertyCategoryValues),
-            sizeSqm: z.number().positive().optional(),
-            unitsCount: z.number().int().positive().optional(),
-            upi: shortText().optional(),
-            terms: z.array(shortText(500)).max(50).optional(),
-            attributes: z.array(attributeSchema).max(50).optional(),
-            addressLine: shortText(),
-            city: shortText(),
-            state: shortText().optional(),
-            country: shortText(),
-            postalCode: shortText().optional(),
-            bedrooms: z.number().int().nonnegative().optional(),
-            bathrooms: z.number().int().nonnegative().optional(),
-            rentAmount: z.number().positive(),
-            rentConditions: longText().optional(),
-            ownerId: z.string().uuid().optional()
-        })
-        .superRefine((data, ctx) => checkCategoryTypeConsistency(data, ctx, { requireFields: true }))
+    body: z.object({
+        title: shortText(),
+        type: z.enum(propertyTypeValues),
+        location: shortText(500),
+        numberOfFloors: z.number().int().min(1).max(200),
+        ownerId: z.string().uuid().optional()
+    })
 };
 
 export const updatePropertySchema = {
     body: z
         .object({
             title: shortText().optional(),
-            description: longText().optional(),
             type: z.enum(propertyTypeValues).optional(),
-            category: z.enum(propertyCategoryValues).optional(),
-            sizeSqm: z.number().positive().optional(),
-            unitsCount: z.number().int().positive().optional(),
-            upi: shortText().optional(),
-            terms: z.array(shortText(500)).max(50).optional(),
-            attributes: z.array(attributeSchema).max(50).optional(),
-            addressLine: shortText().optional(),
-            city: shortText().optional(),
-            state: shortText().optional(),
-            country: shortText().optional(),
-            postalCode: shortText().optional(),
-            bedrooms: z.number().int().nonnegative().optional(),
-            bathrooms: z.number().int().nonnegative().optional(),
-            rentAmount: z.number().positive().optional(),
-            rentConditions: longText().optional(),
+            location: shortText(500).optional(),
             status: z.enum(["available", "occupied"]).optional()
         })
         .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
-        .superRefine((data, ctx) => checkCategoryTypeConsistency(data, ctx, { requireFields: false }))
+};
+
+export const updateFloorSchema = {
+    body: z
+        .object({
+            name: shortText(100).optional(),
+            scale: z.number().positive().optional()
+        })
+        .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
 };
 
 // Excludes "occupied" everywhere a human picks a unit's status directly —
@@ -123,7 +51,7 @@ export const createUnitSchema = {
         label: shortText(),
         unitType: shortText().optional(),
         description: longText().optional(),
-        floor: z.number().int().optional(),
+        floorId: z.string().uuid(),
         bedrooms: z.number().int().nonnegative().optional(),
         bathrooms: z.number().int().nonnegative().optional(),
         rentAmount: z.number().positive(),
@@ -137,7 +65,7 @@ export const updateUnitSchema = {
             label: shortText().optional(),
             unitType: shortText().optional(),
             description: longText().optional(),
-            floor: z.number().int().optional(),
+            floorId: z.string().uuid().optional(),
             bedrooms: z.number().int().nonnegative().optional(),
             bathrooms: z.number().int().nonnegative().optional(),
             rentAmount: z.number().positive().optional(),
@@ -149,8 +77,8 @@ export const updateUnitSchema = {
 
 export const generateUnitsSchema = {
     body: z.object({
+        floorId: z.string().uuid(),
         count: z.number().int().min(1).max(500),
-        floors: z.number().int().min(1).max(500).optional(),
         unitType: shortText().optional(),
         bedrooms: z.number().int().nonnegative().optional(),
         bathrooms: z.number().int().nonnegative().optional(),
@@ -172,10 +100,9 @@ export const listPropertiesSchema = {
         status: z.enum(["available", "occupied"]).optional(),
         approvalStatus: z.enum(["pending", "approved", "rejected"]).optional(),
         type: z.enum(propertyTypeValues).optional(),
-        category: z.enum(propertyCategoryValues).optional(),
-        city: shortText().optional(),
-        minRent: z.coerce.number().nonnegative().optional(),
-        maxRent: z.coerce.number().nonnegative().optional(),
+        // Replaces the old `city` filter now that address is a single free-text
+        // `location` field — matches title or location.
+        search: shortText().optional(),
         ownerId: z.string().uuid().optional(),
         page: z.coerce.number().int().positive().optional(),
         limit: z.coerce.number().int().positive().optional()

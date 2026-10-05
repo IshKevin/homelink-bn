@@ -1,7 +1,7 @@
 import { integer, numeric, pgEnum, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users.schema";
-import { properties } from "./properties.schema";
+import { properties, propertyUnits } from "./properties.schema";
 
 export const maintenanceStatusEnum = pgEnum("maintenance_status", [
     "submitted",
@@ -16,6 +16,10 @@ export const maintenanceRequests = pgTable("maintenance_requests", {
     propertyId: uuid("property_id")
         .notNull()
         .references(() => properties.id, { onDelete: "cascade" }),
+    // Nullable: a request can still be property-wide (e.g. "parking lot light
+    // broken"), and historical requests predating this column have no
+    // reliable way to infer which unit they were about.
+    unitId: uuid("unit_id").references(() => propertyUnits.id, { onDelete: "cascade" }),
     tenantId: uuid("tenant_id")
         .notNull()
         .references(() => users.id),
@@ -47,6 +51,7 @@ export const maintenanceFeedback = pgTable("maintenance_feedback", {
 
 export const maintenanceRequestsRelations = relations(maintenanceRequests, ({ one, many }) => ({
     property: one(properties, { fields: [maintenanceRequests.propertyId], references: [properties.id] }),
+    unit: one(propertyUnits, { fields: [maintenanceRequests.unitId], references: [propertyUnits.id] }),
     tenant: one(users, { fields: [maintenanceRequests.tenantId], references: [users.id] }),
     assignee: one(users, { fields: [maintenanceRequests.assignedTo], references: [users.id] }),
     feedback: many(maintenanceFeedback)

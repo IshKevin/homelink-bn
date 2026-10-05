@@ -1,4 +1,4 @@
-import { boolean, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, integer, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import { users } from "./users.schema";
 
@@ -10,7 +10,6 @@ export const propertyTypeEnum = pgEnum("property_type", [
     "commercial",
     "other"
 ]);
-export const propertyCategoryEnum = pgEnum("property_category", ["residential", "commercial"]);
 export const propertyStatusEnum = pgEnum("property_status", ["available", "occupied"]);
 // Separate from propertyStatusEnum on purpose: a *unit* can be pulled out of
 // service (maintenance) or deliberately not offered (inactive) independent
@@ -26,24 +25,17 @@ export const properties = pgTable("properties", {
         .references(() => users.id, { onDelete: "cascade" }),
     agentId: uuid("agent_id").references(() => users.id, { onDelete: "set null" }),
     title: varchar("title", { length: 255 }).notNull(),
-    description: text("description"),
     type: propertyTypeEnum("type").notNull(),
-    category: propertyCategoryEnum("category").notNull().default("residential"),
-    sizeSqm: numeric("size_sqm", { precision: 10, scale: 2 }),
-    unitsCount: integer("units_count"),
-    upi: varchar("upi", { length: 50 }),
-    terms: jsonb("terms").$type<string[]>().notNull().default([]),
-    attributes: jsonb("attributes").$type<{ label: string; value: string }[]>().notNull().default([]),
     documentUrl: text("document_url"),
-    addressLine: varchar("address_line", { length: 255 }).notNull(),
-    city: varchar("city", { length: 100 }).notNull(),
-    state: varchar("state", { length: 100 }),
-    country: varchar("country", { length: 100 }).notNull(),
-    postalCode: varchar("postal_code", { length: 20 }),
-    bedrooms: numeric("bedrooms", { precision: 4, scale: 0 }),
-    bathrooms: numeric("bathrooms", { precision: 4, scale: 0 }),
-    rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
-    rentConditions: text("rent_conditions"),
+    // Replaces the old addressLine/city/state/country/postalCode breakdown
+    // with one free-text field; numberOfFloors drives floor auto-creation at
+    // registration (see createProperty). The old per-property
+    // category/sizeSqm/unitsCount/description/upi/terms/attributes/bedrooms/
+    // bathrooms/rentAmount/rentConditions fields were dropped entirely —
+    // rent/bedrooms/bathrooms now live per-unit only, floors+units replace
+    // the rest.
+    location: text("location").notNull(),
+    numberOfFloors: integer("number_of_floors").notNull(),
     status: propertyStatusEnum("status").notNull().default("available"),
     approvalStatus: approvalStatusEnum("approval_status").notNull().default("pending"),
     isActive: boolean("is_active").notNull().default(true),
@@ -56,6 +48,29 @@ export const properties = pgTable("properties", {
         .defaultNow()
         .$onUpdate(() => new Date())
 });
+
+export const floors = pgTable(
+    "floors",
+    {
+        id: uuid("id").defaultRandom().primaryKey(),
+        propertyId: uuid("property_id")
+            .notNull()
+            .references(() => properties.id, { onDelete: "cascade" }),
+        // Mutable display name, seeded at creation from `index` (0 -> "Ground",
+        // N -> "Floor N") but editable afterward independent of index.
+        name: varchar("name", { length: 100 }).notNull(),
+        // Floor size/area — called "scale" by the business, kept nullable since
+        // it's set via Edit after the floor exists, never at auto-creation time.
+        scale: numeric("scale", { precision: 10, scale: 2 }),
+        index: integer("index").notNull(),
+        createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+        updatedAt: timestamp("updated_at", { withTimezone: true })
+            .notNull()
+            .defaultNow()
+            .$onUpdate(() => new Date())
+    },
+    (table) => [uniqueIndex("floors_property_id_index_idx").on(table.propertyId, table.index)]
+);
 
 export const propertyImages = pgTable("property_images", {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -78,7 +93,9 @@ export const propertyUnits = pgTable(
         // from bedrooms/bathrooms, which stay numeric for filtering/search.
         unitType: varchar("unit_type", { length: 100 }),
         description: text("description"),
-        floor: integer("floor"),
+        floorId: uuid("floor_id")
+            .notNull()
+            .references(() => floors.id, { onDelete: "cascade" }),
         bedrooms: numeric("bedrooms", { precision: 4, scale: 0 }),
         bathrooms: numeric("bathrooms", { precision: 4, scale: 0 }),
         rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
@@ -111,6 +128,12 @@ export const propertiesRelations = relations(properties, ({ one, many }) => ({
     owner: one(users, { fields: [properties.ownerId], references: [users.id] }),
     agent: one(users, { fields: [properties.agentId], references: [users.id] }),
     images: many(propertyImages),
+    units: many(propertyUnits),
+    floors: many(floors)
+}));
+
+export const floorsRelations = relations(floors, ({ one, many }) => ({
+    property: one(properties, { fields: [floors.propertyId], references: [properties.id] }),
     units: many(propertyUnits)
 }));
 
@@ -119,5 +142,6 @@ export const propertyImagesRelations = relations(propertyImages, ({ one }) => ({
 }));
 
 export const propertyUnitsRelations = relations(propertyUnits, ({ one }) => ({
-    property: one(properties, { fields: [propertyUnits.propertyId], references: [properties.id] })
+    property: one(properties, { fields: [propertyUnits.propertyId], references: [properties.id] }),
+    floor: one(floors, { fields: [propertyUnits.floorId], references: [floors.id] })
 }));

@@ -3,6 +3,7 @@ import { z } from "zod";
 export const createMaintenanceRequestSchema = {
     body: z.object({
         propertyId: z.string().uuid(),
+        unitId: z.string().uuid().optional(),
         title: z.string().min(3).max(255),
         description: z.string().min(3).max(5000),
         priority: z.enum(["low", "medium", "high"]).optional()
@@ -40,6 +41,7 @@ export const listMaintenanceRequestsSchema = {
     query: z.object({
         status: z.enum(["submitted", "assigned", "in_progress", "completed"]).optional(),
         propertyId: z.string().uuid().optional(),
+        unitId: z.string().uuid().optional(),
         page: z.coerce.number().int().positive().optional(),
         limit: z.coerce.number().int().positive().optional()
     })

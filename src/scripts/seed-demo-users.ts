@@ -5,6 +5,7 @@ import {
     users,
     managerAssignments,
     properties,
+    floors,
     propertyUnits,
     leases,
     invoices,
@@ -159,13 +160,9 @@ async function seedDemoData(idByEmail: Record<string, string>): Promise<void> {
 
     async function findOrCreateProperty(input: {
         title: string;
-        description: string;
         type: "apartment" | "house" | "studio";
-        sizeSqm: string;
-        bedrooms: string;
-        bathrooms: string;
-        addressLine: string;
-        rentAmount: string;
+        location: string;
+        numberOfFloors: number;
         status: "available" | "occupied";
         approvalStatus: "pending" | "approved";
     }) {
@@ -182,65 +179,53 @@ async function seedDemoData(idByEmail: Record<string, string>): Promise<void> {
                 ownerId,
                 agentId,
                 title: input.title,
-                description: input.description,
                 type: input.type,
-                category: "residential",
-                sizeSqm: input.sizeSqm,
-                unitsCount: 1,
-                addressLine: input.addressLine,
-                city: "Kigali",
-                country: "Rwanda",
-                bedrooms: input.bedrooms,
-                bathrooms: input.bathrooms,
-                rentAmount: input.rentAmount,
+                location: input.location,
+                numberOfFloors: input.numberOfFloors,
                 status: input.status,
                 approvalStatus: input.approvalStatus,
                 approvedBy: input.approvalStatus === "approved" ? adminId : null,
                 approvedAt: input.approvalStatus === "approved" ? subDays(new Date(), 60) : null
             })
             .returning();
+        await db.insert(floors).values({ propertyId: created!.id, name: "Ground", index: 0 });
         logger.info({ title: input.title }, "Demo property created");
         return created!;
     }
 
+    async function findOrCreateGroundFloor(propertyId: string) {
+        const [floor] = await db.select().from(floors).where(and(eq(floors.propertyId, propertyId), eq(floors.index, 0))).limit(1);
+        return floor!;
+    }
+
     const leasedProperty = await findOrCreateProperty({
         title: "Kigali Heights Apartment",
-        description: "Modern 2-bedroom apartment in Kigali Heights with secure parking and 24/7 water supply.",
         type: "apartment",
-        sizeSqm: "85.00",
-        bedrooms: "2",
-        bathrooms: "1",
-        addressLine: "KG 7 Ave, Kigali Heights",
-        rentAmount: "250000",
+        location: "KG 7 Ave, Kigali Heights, Kigali, Rwanda",
+        numberOfFloors: 1,
         status: "occupied",
         approvalStatus: "approved"
     });
 
     await findOrCreateProperty({
         title: "Nyarutarama Villa",
-        description: "Spacious 4-bedroom villa with a garden, ideal for families, near Nyarutarama golf course.",
         type: "house",
-        sizeSqm: "220.00",
-        bedrooms: "4",
-        bathrooms: "3",
-        addressLine: "KG 11 Ave, Nyarutarama",
-        rentAmount: "600000",
+        location: "KG 11 Ave, Nyarutarama, Kigali, Rwanda",
+        numberOfFloors: 1,
         status: "available",
         approvalStatus: "approved"
     });
 
     await findOrCreateProperty({
         title: "Remera Studio",
-        description: "Compact studio near Remera, awaiting admin approval — useful for demoing the approval queue.",
         type: "studio",
-        sizeSqm: "35.00",
-        bedrooms: "1",
-        bathrooms: "1",
-        addressLine: "KG 17 Ave, Remera",
-        rentAmount: "120000",
+        location: "KG 17 Ave, Remera, Kigali, Rwanda",
+        numberOfFloors: 1,
         status: "available",
         approvalStatus: "pending"
     });
+
+    const leasedPropertyGroundFloor = await findOrCreateGroundFloor(leasedProperty.id);
 
     let [unit] = await db
         .select()
@@ -252,6 +237,7 @@ async function seedDemoData(idByEmail: Record<string, string>): Promise<void> {
             .insert(propertyUnits)
             .values({
                 propertyId: leasedProperty.id,
+                floorId: leasedPropertyGroundFloor.id,
                 label: "Unit A1",
                 bedrooms: "2",
                 bathrooms: "1",

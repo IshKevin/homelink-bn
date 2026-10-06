@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
 import { createAuthedUser, createInvoice, createLease, createPayment, createProperty } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
-import { properties, propertyUnits, users } from "../../../database/schema";
+import { leases, properties, propertyUnits, users } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";
 
 jest.mock("../../../services/storage.service", () => ({
@@ -295,8 +295,8 @@ describe("Leases module", () => {
     });
 
     describe("Signing a lease", () => {
-        it("activates the lease and creates a move-in request once both parties sign", async () => {
-            const { owner, ownerToken, tenant, tenantToken, property } = await setupOwnerTenantProperty();
+        it("activates the lease and creates a move-in request as soon as the tenant signs", async () => {
+            const { owner, tenant, tenantToken, property } = await setupOwnerTenantProperty();
             const lease = await createLease({
                 propertyId: property.id,
                 tenantId: tenant.id,
@@ -304,18 +304,14 @@ describe("Leases module", () => {
                 status: "pending_signatures"
             });
 
-            const firstSign = await testRequest()
+            const signRes = await testRequest()
                 .post(`/api/v1/leases/${lease.id}/sign`)
                 .set("Authorization", `Bearer ${tenantToken}`);
-            expect(firstSign.status).toBe(200);
-            expect(firstSign.body.data.status).toBe("pending_signatures");
-
-            const secondSign = await testRequest()
-                .post(`/api/v1/leases/${lease.id}/sign`)
-                .set("Authorization", `Bearer ${ownerToken}`);
-            expect(secondSign.status).toBe(200);
-            expect(secondSign.body.data.status).toBe("active");
-            expect(secondSign.body.data.documentUrl).toBeTruthy();
+            expect(signRes.status).toBe(200);
+            expect(signRes.body.data.status).toBe("active");
+            expect(signRes.body.data.documentUrl).toBeTruthy();
+            expect(signRes.body.data.tenantSignedAt).toBeTruthy();
+            expect(signRes.body.data.ownerSignedAt).toBeTruthy();
 
             const [updatedProperty] = await db.select().from(properties).where(eq(properties.id, property.id)).limit(1);
             expect(updatedProperty?.status).toBe("occupied");
@@ -326,11 +322,29 @@ describe("Leases module", () => {
             expect(moveRequestsRes.status).toBe(200);
             expect(moveRequestsRes.body.data.some((m: { type: string }) => m.type === "move_in")).toBe(true);
         });
+
+        it("rejects an owner trying to sign — only the tenant can", async () => {
+            const { owner, ownerToken, tenant, property } = await setupOwnerTenantProperty();
+            const lease = await createLease({
+                propertyId: property.id,
+                tenantId: tenant.id,
+                ownerId: owner.id,
+                status: "pending_signatures"
+            });
+
+            const res = await testRequest()
+                .post(`/api/v1/leases/${lease.id}/sign`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(res.status).toBe(403);
+
+            const [stillPending] = await db.select().from(leases).where(eq(leases.id, lease.id)).limit(1);
+            expect(stillPending?.status).toBe("pending_signatures");
+        });
     });
 
     describe("Move-in requests", () => {
         it("marks the auto-created move-in request completed once every checklist item is done", async () => {
-            const { owner, ownerToken, tenant, tenantToken, property } = await setupOwnerTenantProperty();
+            const { owner, tenant, tenantToken, property } = await setupOwnerTenantProperty();
             const lease = await createLease({
                 propertyId: property.id,
                 tenantId: tenant.id,
@@ -339,7 +353,6 @@ describe("Leases module", () => {
             });
 
             await testRequest().post(`/api/v1/leases/${lease.id}/sign`).set("Authorization", `Bearer ${tenantToken}`);
-            await testRequest().post(`/api/v1/leases/${lease.id}/sign`).set("Authorization", `Bearer ${ownerToken}`);
 
             const moveRequestsRes = await testRequest()
                 .get(`/api/v1/leases/${lease.id}/move-requests`)
@@ -584,10 +597,7 @@ describe("Leases module", () => {
                 expect(createRes.status).toBe(201);
                 const leaseId = createRes.body.data.id as string;
 
-                await testRequest().post(`/api/v1/leases/${leaseId}/sign`).set("Authorization", `Bearer ${tenantToken}`);
-                const signRes = await testRequest()
-                    .post(`/api/v1/leases/${leaseId}/sign`)
-                    .set("Authorization", `Bearer ${ownerToken}`);
+                const signRes = await testRequest().post(`/api/v1/leases/${leaseId}/sign`).set("Authorization", `Bearer ${tenantToken}`);
                 expect(signRes.status).toBe(200);
                 expect(signRes.body.data.status).toBe("active");
 

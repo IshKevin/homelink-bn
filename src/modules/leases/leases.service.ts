@@ -664,13 +664,15 @@ export function buildLeaseStatementHtml(statement: LeaseStatement): string {
     `;
 }
 
+// Only the tenant signs — their signature alone executes the lease (see the
+// route's authorize("tenant")). ownerSignedAt is still set, equal to
+// tenantSignedAt, so existing code reading "is this lease fully executed"
+// via both fields keeps working unchanged.
 export async function signLease(leaseId: string, requester: Requester) {
     const lease = await getLeaseOrThrow(leaseId);
 
-    const isTenant = requester.id === lease.tenantId;
-    const isOwner = requester.id === lease.ownerId;
-    if (!isTenant && !isOwner) {
-        throw AppError.forbidden("You do not have permission to sign this lease");
+    if (requester.id !== lease.tenantId) {
+        throw AppError.forbidden("Only the tenant can sign this lease");
     }
 
     if (lease.status !== "pending_signatures") {
@@ -678,59 +680,54 @@ export async function signLease(leaseId: string, requester: Requester) {
     }
 
     const now = new Date();
-    const signUpdates: Partial<typeof leases.$inferInsert> = { updatedAt: now };
-    if (isTenant) signUpdates.tenantSignedAt = now;
-    if (isOwner) signUpdates.ownerSignedAt = now;
-
-    const [signed] = await db.update(leases).set(signUpdates).where(eq(leases.id, leaseId)).returning();
+    const [signed] = await db
+        .update(leases)
+        .set({ tenantSignedAt: now, ownerSignedAt: now, updatedAt: now })
+        .where(eq(leases.id, leaseId))
+        .returning();
     if (!signed) throw AppError.internal("Failed to sign lease");
 
     await recordAction({ userId: requester.id, action: "lease.sign", entity: "lease", entityId: leaseId });
 
-    let result = signed;
+    const property = await getPropertyOrThrow(signed.propertyId);
 
-    if (signed.tenantSignedAt && signed.ownerSignedAt) {
-        const property = await getPropertyOrThrow(signed.propertyId);
+    await db.update(propertyUnits).set({ status: "occupied", updatedAt: now }).where(eq(propertyUnits.id, signed.unitId));
+    await recomputePropertyStatus(property.id);
 
-        await db.update(propertyUnits).set({ status: "occupied", updatedAt: now }).where(eq(propertyUnits.id, signed.unitId));
-        await recomputePropertyStatus(property.id);
+    await db.insert(moveRequests).values({
+        leaseId: signed.id,
+        type: "move_in",
+        status: "pending",
+        requestedBy: signed.tenantId,
+        checklist: DEFAULT_MOVE_IN_CHECKLIST
+    });
 
-        await db.insert(moveRequests).values({
-            leaseId: signed.id,
-            type: "move_in",
-            status: "pending",
-            requestedBy: signed.tenantId,
-            checklist: DEFAULT_MOVE_IN_CHECKLIST
-        });
+    const documentUrl = await generateAndStoreLeaseDocument(signed, property);
 
-        const documentUrl = await generateAndStoreLeaseDocument(signed, property);
+    const [activated] = await db
+        .update(leases)
+        .set({ status: "active", documentUrl, updatedAt: now })
+        .where(eq(leases.id, leaseId))
+        .returning();
 
-        const [activated] = await db
-            .update(leases)
-            .set({ status: "active", documentUrl, updatedAt: now })
-            .where(eq(leases.id, leaseId))
-            .returning();
+    if (!activated) throw AppError.internal("Failed to activate lease");
 
-        if (!activated) throw AppError.internal("Failed to activate lease");
-        result = activated;
+    await notify({
+        userId: signed.tenantId,
+        type: "lease.activated",
+        title: "Lease activated",
+        message: `Your lease for "${property.title}" is now active.`,
+        sendEmail: true
+    });
+    await notify({
+        userId: signed.ownerId,
+        type: "lease.activated",
+        title: "Lease activated",
+        message: `The lease for "${property.title}" is now active.`,
+        sendEmail: true
+    });
 
-        await notify({
-            userId: signed.tenantId,
-            type: "lease.activated",
-            title: "Lease activated",
-            message: `Your lease for "${property.title}" is now active.`,
-            sendEmail: true
-        });
-        await notify({
-            userId: signed.ownerId,
-            type: "lease.activated",
-            title: "Lease activated",
-            message: `The lease for "${property.title}" is now active.`,
-            sendEmail: true
-        });
-    }
-
-    return result;
+    return activated;
 }
 
 export async function getLeaseDocument(

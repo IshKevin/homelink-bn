@@ -215,7 +215,7 @@ router.get("/:id/statement", validate(leaseStatementQuerySchema), getLeaseStatem
  * /leases/{id}/sign:
  *   post:
  *     tags: [Leases]
- *     summary: Sign a lease as tenant or owner
+ *     summary: Sign a lease as the tenant — this alone activates it, no separate owner countersignature
  *     parameters:
  *       - in: path
  *         name: id
@@ -223,11 +223,17 @@ router.get("/:id/statement", validate(leaseStatementQuerySchema), getLeaseStatem
  *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
- *         description: Lease signed (activated once both parties have signed)
+ *         description: Lease signed and activated
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/SuccessResponse'
+ *       403:
+ *         description: Only the tenant can sign this lease
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
  *       409:
  *         description: Lease is not awaiting signatures
  *         content:
@@ -235,7 +241,7 @@ router.get("/:id/statement", validate(leaseStatementQuerySchema), getLeaseStatem
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.post("/:id/sign", authorize("tenant", "owner"), signLeaseHandler);
+router.post("/:id/sign", authorize("tenant"), signLeaseHandler);
 
 /**
  * @openapi

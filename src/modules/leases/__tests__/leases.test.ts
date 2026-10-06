@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { testRequest } from "../../../../tests/helpers/app";
 import { createAuthedUser, createInvoice, createLease, createPayment, createProperty } from "../../../../tests/helpers/factories";
 import { db } from "../../../database";
-import { leases, properties, propertyUnits, users } from "../../../database/schema";
+import { invoices, leases, properties, propertyUnits, users } from "../../../database/schema";
 import * as storageService from "../../../services/storage.service";
 
 jest.mock("../../../services/storage.service", () => ({
@@ -218,7 +218,7 @@ describe("Leases module", () => {
                 });
 
             expect(res.status).toBe(201);
-            expect(res.body.data.loginCode).toMatch(/^[A-Z2-9]{8}$/);
+            expect(res.body.data.loginCode).toMatch(/^\d{5}$/);
             expect(res.body.data.tenant.id).not.toBe(existingTenant.id);
             expect(res.body.data.tenant.email).toBe(existingTenant.email);
 
@@ -321,6 +321,33 @@ describe("Leases module", () => {
                 .set("Authorization", `Bearer ${tenantToken}`);
             expect(moveRequestsRes.status).toBe(200);
             expect(moveRequestsRes.body.data.some((m: { type: string }) => m.type === "move_in")).toBe(true);
+
+            // Rent is due starting the lease's start date — the tenant
+            // shouldn't have to wait for the next day's invoice-generation
+            // job run to see anything on file.
+            const [invoice] = await db.select().from(invoices).where(eq(invoices.leaseId, lease.id)).limit(1);
+            expect(invoice).toBeDefined();
+        });
+
+        it("does not create an invoice yet for a lease that starts in the future", async () => {
+            const { owner, tenant, tenantToken, property } = await setupOwnerTenantProperty();
+            const futureStart = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+            const lease = await createLease({
+                propertyId: property.id,
+                tenantId: tenant.id,
+                ownerId: owner.id,
+                status: "pending_signatures",
+                startDate: futureStart
+            });
+
+            const signRes = await testRequest()
+                .post(`/api/v1/leases/${lease.id}/sign`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(signRes.status).toBe(200);
+            expect(signRes.body.data.status).toBe("active");
+
+            const invoiceRows = await db.select().from(invoices).where(eq(invoices.leaseId, lease.id));
+            expect(invoiceRows).toHaveLength(0);
         });
 
         it("rejects an owner trying to sign — only the tenant can", async () => {

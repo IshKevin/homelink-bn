@@ -12,6 +12,31 @@ function computeDueDate(today: Date, paymentDate: string | null): string {
     return format(setDate(today, clampedDay), "yyyy-MM-dd");
 }
 
+// Shared with signLease, which calls this inline on activation so a lease
+// has its current-period invoice the moment it goes active, rather than
+// waiting for this job's next daily run (up to ~24h later). Same
+// existing-invoice check either way, so there's no double-invoice risk.
+export async function ensureInvoiceForLease(lease: typeof leases.$inferSelect, today: Date): Promise<boolean> {
+    const period = format(today, "yyyy-MM");
+    const [existing] = await db
+        .select()
+        .from(invoices)
+        .where(and(eq(invoices.leaseId, lease.id), eq(invoices.period, period)))
+        .limit(1);
+
+    if (existing) return false;
+
+    const invoiceNumber = await nextDocumentNumber("ACC-INV", today);
+    await db.insert(invoices).values({
+        invoiceNumber,
+        leaseId: lease.id,
+        period,
+        amountDue: lease.rentAmount,
+        dueDate: computeDueDate(today, lease.paymentDate)
+    });
+    return true;
+}
+
 export async function generateInvoicesJob(): Promise<void> {
     const today = new Date();
     const period = format(today, "yyyy-MM");
@@ -30,23 +55,7 @@ export async function generateInvoicesJob(): Promise<void> {
 
     let created = 0;
     for (const lease of activeLeases) {
-        const [existing] = await db
-            .select()
-            .from(invoices)
-            .where(and(eq(invoices.leaseId, lease.id), eq(invoices.period, period)))
-            .limit(1);
-
-        if (existing) continue;
-
-        const invoiceNumber = await nextDocumentNumber("ACC-INV", today);
-        await db.insert(invoices).values({
-            invoiceNumber,
-            leaseId: lease.id,
-            period,
-            amountDue: lease.rentAmount,
-            dueDate: computeDueDate(today, lease.paymentDate)
-        });
-        created += 1;
+        if (await ensureInvoiceForLease(lease, today)) created += 1;
     }
 
     logger.info({ created, period }, "generateInvoicesJob complete");

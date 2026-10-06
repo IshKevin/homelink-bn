@@ -1,4 +1,4 @@
-import { addHours } from "date-fns";
+import { addHours, format } from "date-fns";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../database";
 import {
@@ -25,6 +25,7 @@ import { sendMail } from "../../services/email.service";
 import { setPasswordTemplate } from "../../services/email.templates";
 import { env } from "../../config/env";
 import { isAdminRole, resolveEffectiveOwnerId } from "../../services/iam.service";
+import { ensureInvoiceForLease } from "../../jobs/handlers/generateInvoices.job";
 import { recomputePropertyStatus } from "../properties/properties.service";
 import { leasesCreatedTotal } from "../../config/metrics";
 
@@ -711,6 +712,14 @@ export async function signLease(leaseId: string, requester: Requester) {
         .returning();
 
     if (!activated) throw AppError.internal("Failed to activate lease");
+
+    // Rent is due starting the lease's start date — don't wait for
+    // generateInvoicesJob's next daily run (up to ~24h later). Skipped for a
+    // future-dated lease, matching that job's own startDate filter: nothing
+    // is due until the lease actually starts.
+    if (activated.startDate <= format(now, "yyyy-MM-dd")) {
+        await ensureInvoiceForLease(activated, now);
+    }
 
     await notify({
         userId: signed.tenantId,

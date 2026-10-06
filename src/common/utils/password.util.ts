@@ -23,16 +23,11 @@ export function generateTempPassword(length = 10): string {
     return out;
 }
 
-// A tenant's permanent login identifier — uppercase only (unambiguous when
-// read aloud/relayed by a landlord), same excluded-character rationale as
-// above.
-const LOGIN_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-
-export function generateLoginCode(length = 8): string {
-    const bytes = crypto.randomBytes(length);
-    let out = "";
-    for (let i = 0; i < length; i++) {
-        out += LOGIN_CODE_ALPHABET[bytes[i]! % LOGIN_CODE_ALPHABET.length];
-    }
-    return out;
+// A tenant's permanent login identifier — a plain 5-digit number, easy to
+// read aloud/retype/relay by a landlord. Zero-padded so it's always exactly
+// 5 characters (a dropped leading zero would silently look like a
+// different, shorter code).
+export function generateLoginCode(digits = 5): string {
+    const max = 10 ** digits;
+    return String(crypto.randomInt(0, max)).padStart(digits, "0");
 }

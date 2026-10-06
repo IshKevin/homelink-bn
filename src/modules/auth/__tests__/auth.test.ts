@@ -153,17 +153,6 @@ describe("Auth module", () => {
             expect(res.status).toBe(401);
         });
 
-        it("logging in with a tenant's login code is case-insensitive", async () => {
-            const { user: tenant } = await createUser({ password: "Password123!", role: "tenant" });
-
-            const res = await testRequest().post("/api/v1/auth/login").send({
-                identifier: tenant.loginCode!.toLowerCase(),
-                password: "Password123!"
-            });
-
-            expect(res.status).toBe(200);
-        });
-
         it("allows two tenant accounts sharing the same email to log in independently via their own codes", async () => {
             const sharedEmail = "shared-tenant@example.com";
             const { user: tenantA } = await createUser({ email: sharedEmail, password: "PasswordA1!", role: "tenant" });

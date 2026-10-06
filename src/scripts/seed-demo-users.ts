@@ -26,6 +26,9 @@ const DEMO_USERS = [
     {
         email: "tenant.demo@homelink.dev",
         password: "Demo@1234",
+        // Fixed, well-known — tenants log in by code, not email, so without
+        // this the demo tenant account would be unreachable.
+        loginCode: "00001",
         role: "tenant" as const,
         firstName: "Tina",
         lastName: "Tenant",
@@ -80,11 +83,14 @@ async function seedDemoUsers(): Promise<Record<string, string>> {
         const passwordHash = await hashPassword(demoUser.password);
         const [existing] = await db.select().from(users).where(eq(users.email, demoUser.email)).limit(1);
 
+        const loginCode = "loginCode" in demoUser ? demoUser.loginCode : undefined;
+
         if (existing) {
             await db
                 .update(users)
                 .set({
                     passwordHash,
+                    loginCode,
                     role: demoUser.role,
                     firstName: demoUser.firstName,
                     lastName: demoUser.lastName,
@@ -102,6 +108,7 @@ async function seedDemoUsers(): Promise<Record<string, string>> {
                 .values({
                     email: demoUser.email,
                     passwordHash,
+                    loginCode,
                     firstName: demoUser.firstName,
                     lastName: demoUser.lastName,
                     phone: demoUser.phone,
@@ -397,7 +404,14 @@ async function main() {
     await seedDemoData(idByEmail);
 
     logger.info(
-        { users: DEMO_USERS.map((u) => ({ email: u.email, password: u.password, role: u.role })) },
+        {
+            users: DEMO_USERS.map((u) => ({
+                email: u.email,
+                password: u.password,
+                role: u.role,
+                loginCode: "loginCode" in u ? u.loginCode : undefined
+            }))
+        },
         "Demo users and demo data ready"
     );
 }

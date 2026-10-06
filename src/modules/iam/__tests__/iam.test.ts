@@ -52,7 +52,7 @@ describe("IAM module", () => {
 
             const loginRes = await testRequest()
                 .post("/api/v1/auth/login")
-                .send({ email: "manager@example.com", password: "Password123!" });
+                .send({ identifier: "manager@example.com", password: "Password123!" });
             expect(loginRes.status).toBe(200);
             const managerToken = loginRes.body.data.accessToken;
 
@@ -87,7 +87,7 @@ describe("IAM module", () => {
 
             const loginRes = await testRequest()
                 .post("/api/v1/auth/login")
-                .send({ email: "manager2@example.com", password: "Password123!" });
+                .send({ identifier: "manager2@example.com", password: "Password123!" });
             const managerToken = loginRes.body.data.accessToken;
 
             const res = await testRequest()
@@ -117,7 +117,7 @@ describe("IAM module", () => {
 
             const loginRes = await testRequest()
                 .post("/api/v1/auth/login")
-                .send({ email: "landlord-invite@example.com", password: "Password123!" });
+                .send({ identifier: "landlord-invite@example.com", password: "Password123!" });
             expect(loginRes.status).toBe(200);
         });
 
@@ -191,7 +191,7 @@ describe("IAM module", () => {
 
             const loginRes = await testRequest()
                 .post("/api/v1/auth/login")
-                .send({ email: targetTenant.email, password: "Password123!" });
+                .send({ identifier: targetTenant.loginCode, password: "Password123!" });
             expect(loginRes.status).toBe(403);
         });
 

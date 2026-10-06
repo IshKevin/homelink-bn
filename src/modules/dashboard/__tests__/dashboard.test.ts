@@ -153,7 +153,7 @@ describe("Dashboard module", () => {
             await createMaintenanceRequest({ propertyId: property.id, tenantId: tenant.id, status: "in_progress" });
             await createMaintenanceRequest({ propertyId: property.id, tenantId: tenant.id, status: "completed" });
 
-            const tenantLoginRes = await testRequest().post("/api/v1/auth/login").send({ email: tenant.email, password: "Password123!" });
+            const tenantLoginRes = await testRequest().post("/api/v1/auth/login").send({ identifier: tenant.loginCode, password: "Password123!" });
             const tenantToken = tenantLoginRes.body.data.accessToken;
 
             const res = await testRequest().get("/api/v1/dashboard/tenant").set("Authorization", `Bearer ${tenantToken}`);

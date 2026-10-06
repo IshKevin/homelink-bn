@@ -39,7 +39,7 @@ router.use(authRateLimiter);
  *         firstName: { type: string }
  *         lastName: { type: string }
  *         phone: { type: string }
- *         role: { type: string, enum: [tenant, owner, agent] }
+ *         role: { type: string, enum: [owner, agent], description: "Tenant self-registration is retired — tenants are only created by a landlord/agent (POST /leases newTenant), which assigns them a login code instead of an email identity." }
  *     AuthTokens:
  *       type: object
  *       properties:
@@ -49,7 +49,7 @@ router.use(authRateLimiter);
  * /auth/register:
  *   post:
  *     tags: [Auth]
- *     summary: Register as a tenant, property owner, or agent
+ *     summary: Register as a property owner or agent (tenant self-registration is retired)
  *     security: []
  *     requestBody:
  *       required: true
@@ -77,7 +77,7 @@ router.post("/register", validate(registerSchema), registerHandler);
  * /auth/login:
  *   post:
  *     tags: [Auth]
- *     summary: Log in with email and password
+ *     summary: Log in — owner/agent/admin with email, tenant with their permanent login code
  *     security: []
  *     requestBody:
  *       required: true
@@ -85,9 +85,9 @@ router.post("/register", validate(registerSchema), registerHandler);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [email, password]
+ *             required: [identifier, password]
  *             properties:
- *               email: { type: string, format: email }
+ *               identifier: { type: string, description: "Email for owner/agent/admin, or a tenant's login code" }
  *               password: { type: string, format: password }
  *     responses:
  *       200:
@@ -201,7 +201,7 @@ router.post("/logout", validate(refreshSchema), logoutHandler);
  * /auth/forgot-password:
  *   post:
  *     tags: [Auth]
- *     summary: Request a password reset link by email
+ *     summary: Request a password reset link - by email for owner/agent/admin, by login code for a tenant
  *     security: []
  *     requestBody:
  *       required: true
@@ -209,12 +209,12 @@ router.post("/logout", validate(refreshSchema), logoutHandler);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [email]
+ *             required: [identifier]
  *             properties:
- *               email: { type: string, format: email }
+ *               identifier: { type: string, description: "Email for owner/agent/admin, or a tenant login code" }
  *     responses:
  *       200:
- *         description: Reset link sent if the email exists
+ *         description: Reset link sent if the account exists
  *         content:
  *           application/json:
  *             schema:

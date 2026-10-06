@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { addDays, addHours, addMinutes } from "date-fns";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, ne } from "drizzle-orm";
 import { db } from "../../database";
 import { loginChallenges, passwordResetTokens, refreshTokens, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
@@ -25,7 +25,7 @@ export interface RegisterInput {
     firstName: string;
     lastName: string;
     phone: string;
-    role: "tenant" | "owner" | "agent";
+    role: "owner" | "agent";
 }
 
 export interface RequestMeta {
@@ -105,7 +105,14 @@ async function issueLoginChallenge(user: typeof users.$inferSelect, meta: Reques
 }
 
 export async function register(input: RegisterInput, meta: RequestMeta = {}) {
-    const [existing] = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
+    // Scoped to non-tenant roles to match the partial unique index — a
+    // tenant account sharing this email (now allowed) must not block a
+    // legitimate owner/agent registration.
+    const [existing] = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.email, input.email), ne(users.role, "tenant")))
+        .limit(1);
     if (existing) {
         throw AppError.conflict("An account with this email already exists");
     }
@@ -135,11 +142,26 @@ export async function register(input: RegisterInput, meta: RequestMeta = {}) {
 
 const DEMO_EMAIL_DOMAIN = "@homelink.dev";
 
-export async function login(email: string, password: string, meta: RequestMeta = {}) {
-    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+export async function login(identifier: string, password: string, meta: RequestMeta = {}) {
+    // Owner/agent/admin log in by email; tenants by their permanent login
+    // code (see users.schema.ts) — tenant email isn't unique, so it's never
+    // a valid login identifier.
+    const isEmail = identifier.includes("@");
+    const [user] = isEmail
+        ? await db
+              .select()
+              .from(users)
+              .where(and(eq(users.email, identifier), ne(users.role, "tenant")))
+              .limit(1)
+        : await db
+              .select()
+              .from(users)
+              .where(and(eq(users.loginCode, identifier.toUpperCase()), eq(users.role, "tenant")))
+              .limit(1);
+
     if (!user || !(await comparePassword(password, user.passwordHash))) {
         loginsTotal.inc({ outcome: "invalid_credentials" });
-        throw AppError.unauthorized("Invalid email or password");
+        throw AppError.unauthorized(isEmail ? "Invalid email or password" : "Invalid login code or password");
     }
     if (!user.isActive) {
         loginsTotal.inc({ outcome: "deactivated" });
@@ -244,9 +266,23 @@ export async function logout(rawRefreshToken: string) {
         .where(and(eq(refreshTokens.tokenHash, tokenHash), isNull(refreshTokens.revokedAt)));
 }
 
-export async function forgotPassword(email: string) {
-    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-    // Do not reveal whether the email exists.
+export async function forgotPassword(identifier: string) {
+    // Mirrors login's identifier resolution — a tenant resets via their
+    // login code, never email, so a shared tenant email can never resolve
+    // to the wrong account here.
+    const isEmail = identifier.includes("@");
+    const [user] = isEmail
+        ? await db
+              .select()
+              .from(users)
+              .where(and(eq(users.email, identifier), ne(users.role, "tenant")))
+              .limit(1)
+        : await db
+              .select()
+              .from(users)
+              .where(and(eq(users.loginCode, identifier.toUpperCase()), eq(users.role, "tenant")))
+              .limit(1);
+    // Do not reveal whether the account exists.
     if (!user) return;
 
     const rawToken = generateRawToken();

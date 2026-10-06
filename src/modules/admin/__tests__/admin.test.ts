@@ -371,7 +371,7 @@ describe("Admin module", () => {
 
             const loginRes = await testRequest()
                 .post("/api/v1/auth/login")
-                .send({ email: "newowner@example.com", password: "NewOwnerPass1!" });
+                .send({ identifier: "newowner@example.com", password: "NewOwnerPass1!" });
             expect(loginRes.status).toBe(200);
         });
 

@@ -2,7 +2,7 @@ import { faker } from "@faker-js/faker";
 import { eq } from "drizzle-orm";
 import { db } from "../../src/database";
 import { floors, invoices, leases, maintenanceRequests, payments, properties, propertyUnits, users } from "../../src/database/schema";
-import { hashPassword } from "../../src/common/utils/password.util";
+import { hashPassword, generateLoginCode } from "../../src/common/utils/password.util";
 import { signAccessToken } from "../../src/common/utils/jwt.util";
 import { nextDocumentNumber } from "../../src/common/utils/sequence.util";
 
@@ -15,17 +15,24 @@ export interface CreateUserOverrides {
     phone?: string;
     isApproved?: boolean;
     isVerified?: boolean;
+    // Real tenant accounts always have one (it's their login identifier) —
+    // auto-generated here by default so tests don't have to think about it;
+    // pass null to omit for a test specifically about that absence.
+    loginCode?: string | null;
 }
 
 export async function createUser(overrides: CreateUserOverrides = {}) {
     const password = overrides.password ?? "Password123!";
     const passwordHash = await hashPassword(password);
+    const role = overrides.role ?? "tenant";
+    const loginCode = overrides.loginCode === null ? undefined : overrides.loginCode ?? (role === "tenant" ? generateLoginCode() : undefined);
     const [user] = await db
         .insert(users)
         .values({
             email: overrides.email ?? faker.internet.email().toLowerCase(),
+            loginCode,
             passwordHash,
-            role: overrides.role ?? "tenant",
+            role,
             firstName: faker.person.firstName(),
             lastName: faker.person.lastName(),
             phone: overrides.phone ?? faker.phone.number(),

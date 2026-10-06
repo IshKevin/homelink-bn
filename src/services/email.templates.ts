@@ -153,7 +153,13 @@ export function genericNotificationTemplate(firstName: string, message: string):
     );
 }
 
-export function setPasswordTemplate(firstName: string, link: string, propertyName?: string, unitLabel?: string): string {
+export function setPasswordTemplate(
+    firstName: string,
+    link: string,
+    propertyName?: string,
+    unitLabel?: string,
+    loginCode?: string
+): string {
     const asTenantOf = propertyName
         ? ` as the tenant of ${
               unitLabel
@@ -161,11 +167,18 @@ export function setPasswordTemplate(firstName: string, link: string, propertyNam
                   : `<strong style="color: ${BRAND_NAVY};">${propertyName}</strong>`
           }`
         : "";
+    // Tenants log in with this code instead of their email — it's permanent,
+    // so it's called out separately from the one-time set-password link.
+    const loginCodeBlock = loginCode
+        ? `<p style="margin: 16px 0 4px;">Your login code (use this, not your email, to sign in):</p>
+           <p style="margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 2px; color: ${BRAND_NAVY};">${loginCode}</p>`
+        : "";
     return wrapTemplate(
         "Set your HomeLink password",
         `<p style="margin: 0 0 4px;">Hi ${firstName},</p>
          <p style="margin: 0;">A HomeLink account has been created for you${asTenantOf}. Set your password below to finish setting it up and sign in. This link expires in 24 hours.</p>
-         ${ctaButton("Set password", link)}`
+         ${ctaButton("Set password", link)}
+         ${loginCodeBlock}`
     );
 }
 

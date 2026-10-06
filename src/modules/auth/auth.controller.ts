@@ -12,7 +12,7 @@ export async function registerHandler(req: Request, res: Response) {
 }
 
 export async function loginHandler(req: Request, res: Response) {
-    const result = await authService.login(req.body.email, req.body.password, requestMeta(req));
+    const result = await authService.login(req.body.identifier, req.body.password, requestMeta(req));
     const message = "requiresVerification" in result ? "Verification code sent to your email" : "Login successful";
     return sendSuccess(res, { message, data: result });
 }
@@ -33,8 +33,8 @@ export async function logoutHandler(req: Request, res: Response) {
 }
 
 export async function forgotPasswordHandler(req: Request, res: Response) {
-    await authService.forgotPassword(req.body.email);
-    return sendSuccess(res, { message: "If that email exists, a reset link has been sent" });
+    await authService.forgotPassword(req.body.identifier);
+    return sendSuccess(res, { message: "If that account exists, a reset link has been sent" });
 }
 
 export async function resetPasswordHandler(req: Request, res: Response) {

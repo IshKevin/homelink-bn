@@ -14,9 +14,9 @@ jest.mock("../../../services/email.service", () => ({
 describe("Auth security", () => {
     describe("Idle session timeout", () => {
         it("rejects a refresh once the token has been idle past the timeout", async () => {
-            await createUser({ email: "idle@example.com", password: "Password123!" });
+            await createUser({ email: "idle@example.com", password: "Password123!", role: "owner" });
             const loginRes = await testRequest().post("/api/v1/auth/login").send({
-                email: "idle@example.com",
+                identifier: "idle@example.com",
                 password: "Password123!"
             });
             const { refreshToken } = loginRes.body.data;
@@ -41,18 +41,18 @@ describe("Auth security", () => {
         });
 
         it("requires an emailed OTP code when logging in from an unrecognized device, then completes login", async () => {
-            const { user } = await createUser({ email: "newdevice@example.com", password: "Password123!" });
+            const { user } = await createUser({ email: "newdevice@example.com", password: "Password123!", role: "owner" });
 
             await testRequest()
                 .post("/api/v1/auth/login")
                 .set("User-Agent", "device-a")
-                .send({ email: user.email, password: "Password123!" });
+                .send({ identifier: user.email, password: "Password123!" });
 
             const mockedSendMail = emailService.sendMail as jest.Mock;
             const challengeRes = await testRequest()
                 .post("/api/v1/auth/login")
                 .set("User-Agent", "device-b")
-                .send({ email: user.email, password: "Password123!" });
+                .send({ identifier: user.email, password: "Password123!" });
 
             expect(challengeRes.status).toBe(200);
             expect(challengeRes.body.data.requiresVerification).toBe(true);

@@ -195,7 +195,7 @@ describe("Leases module", () => {
             expect(secondTenant).toBeUndefined(); // no orphaned account created for the rejected attempt
         });
 
-        it("rejects newTenant with an email that already exists, and creates no lease", async () => {
+        it("allows newTenant with an email already used by another tenant account, creating a separate account with its own login code", async () => {
             const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
             const { user: existingTenant } = await createAuthedUser({ role: "tenant" });
             const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
@@ -217,10 +217,14 @@ describe("Leases module", () => {
                     rentAmount: 800
                 });
 
-            expect(res.status).toBe(409);
+            expect(res.status).toBe(201);
+            expect(res.body.data.loginCode).toMatch(/^[A-Z2-9]{8}$/);
+            expect(res.body.data.tenant.id).not.toBe(existingTenant.id);
+            expect(res.body.data.tenant.email).toBe(existingTenant.email);
 
-            const [stillAvailable] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unit!.id)).limit(1);
-            expect(stillAvailable!.status).toBe("available");
+            const matchingAccounts = await db.select().from(users).where(eq(users.email, existingTenant.email));
+            expect(matchingAccounts).toHaveLength(2);
+            expect(new Set(matchingAccounts.map((u) => u.loginCode)).size).toBe(2);
         });
 
         it("rejects a request that provides both tenantId and newTenant, or neither", async () => {

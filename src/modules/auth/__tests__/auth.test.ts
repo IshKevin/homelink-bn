@@ -17,9 +17,27 @@ function extractToken(html: string): string {
 
 describe("Auth module", () => {
     describe("POST /api/v1/auth/register", () => {
-        it("registers a tenant and returns tokens", async () => {
+        it("registers an owner and returns tokens", async () => {
             const res = await testRequest().post("/api/v1/auth/register").send({
-                email: "tenant@example.com",
+                email: "owner@example.com",
+                password: "Password123!",
+                firstName: "Jane",
+                lastName: "Doe",
+                phone: "0788123456",
+                role: "owner"
+            });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.accessToken).toBeDefined();
+            expect(res.body.data.refreshToken).toBeDefined();
+            expect(res.body.data.user.email).toBe("owner@example.com");
+            expect(res.body.data.user.passwordHash).toBeUndefined();
+            expect(res.body.data.user.isApproved).toBe(true);
+        });
+
+        it("rejects self-registration as a tenant — tenant accounts are only created via the add-tenant flow", async () => {
+            const res = await testRequest().post("/api/v1/auth/register").send({
+                email: "wannabe-tenant@example.com",
                 password: "Password123!",
                 firstName: "Jane",
                 lastName: "Doe",
@@ -27,12 +45,7 @@ describe("Auth module", () => {
                 role: "tenant"
             });
 
-            expect(res.status).toBe(201);
-            expect(res.body.data.accessToken).toBeDefined();
-            expect(res.body.data.refreshToken).toBeDefined();
-            expect(res.body.data.user.email).toBe("tenant@example.com");
-            expect(res.body.data.user.passwordHash).toBeUndefined();
-            expect(res.body.data.user.isApproved).toBe(true);
+            expect(res.status).toBe(400);
         });
 
         it("marks new agents as not-yet-approved", async () => {
@@ -63,7 +76,7 @@ describe("Auth module", () => {
         });
 
         it("rejects duplicate emails", async () => {
-            await createUser({ email: "dupe@example.com" });
+            await createUser({ email: "dupe@example.com", role: "owner" });
 
             const res = await testRequest().post("/api/v1/auth/register").send({
                 email: "dupe@example.com",
@@ -71,7 +84,7 @@ describe("Auth module", () => {
                 firstName: "Jane",
                 lastName: "Doe",
                 phone: "0788123458",
-                role: "tenant"
+                role: "owner"
             });
 
             expect(res.status).toBe(409);
@@ -79,11 +92,11 @@ describe("Auth module", () => {
     });
 
     describe("POST /api/v1/auth/login", () => {
-        it("logs in with correct credentials", async () => {
-            await createUser({ email: "login@example.com", password: "Password123!" });
+        it("logs in an owner with email + password", async () => {
+            await createUser({ email: "login@example.com", password: "Password123!", role: "owner" });
 
             const res = await testRequest().post("/api/v1/auth/login").send({
-                email: "login@example.com",
+                identifier: "login@example.com",
                 password: "Password123!"
             });
 
@@ -91,11 +104,11 @@ describe("Auth module", () => {
             expect(res.body.data.accessToken).toBeDefined();
         });
 
-        it("rejects wrong password", async () => {
-            await createUser({ email: "login2@example.com", password: "Password123!" });
+        it("rejects wrong password for an owner", async () => {
+            await createUser({ email: "login2@example.com", password: "Password123!", role: "owner" });
 
             const res = await testRequest().post("/api/v1/auth/login").send({
-                email: "login2@example.com",
+                identifier: "login2@example.com",
                 password: "WrongPassword1!"
             });
 
@@ -104,19 +117,73 @@ describe("Auth module", () => {
 
         it("rejects unknown email", async () => {
             const res = await testRequest().post("/api/v1/auth/login").send({
-                email: "nobody@example.com",
+                identifier: "nobody@example.com",
                 password: "Password123!"
             });
 
             expect(res.status).toBe(401);
         });
+
+        it("logs in a tenant with their login code + password, not email", async () => {
+            const { user: tenant } = await createUser({ password: "Password123!", role: "tenant" });
+            expect(tenant.loginCode).toBeTruthy();
+
+            const codeRes = await testRequest().post("/api/v1/auth/login").send({
+                identifier: tenant.loginCode,
+                password: "Password123!"
+            });
+            expect(codeRes.status).toBe(200);
+            expect(codeRes.body.data.user.id).toBe(tenant.id);
+
+            const emailRes = await testRequest().post("/api/v1/auth/login").send({
+                identifier: tenant.email,
+                password: "Password123!"
+            });
+            expect(emailRes.status).toBe(401);
+        });
+
+        it("rejects wrong password for a tenant login code", async () => {
+            const { user: tenant } = await createUser({ password: "Password123!", role: "tenant" });
+
+            const res = await testRequest().post("/api/v1/auth/login").send({
+                identifier: tenant.loginCode,
+                password: "WrongPassword1!"
+            });
+
+            expect(res.status).toBe(401);
+        });
+
+        it("logging in with a tenant's login code is case-insensitive", async () => {
+            const { user: tenant } = await createUser({ password: "Password123!", role: "tenant" });
+
+            const res = await testRequest().post("/api/v1/auth/login").send({
+                identifier: tenant.loginCode!.toLowerCase(),
+                password: "Password123!"
+            });
+
+            expect(res.status).toBe(200);
+        });
+
+        it("allows two tenant accounts sharing the same email to log in independently via their own codes", async () => {
+            const sharedEmail = "shared-tenant@example.com";
+            const { user: tenantA } = await createUser({ email: sharedEmail, password: "PasswordA1!", role: "tenant" });
+            const { user: tenantB } = await createUser({ email: sharedEmail, password: "PasswordB1!", role: "tenant" });
+
+            const resA = await testRequest().post("/api/v1/auth/login").send({ identifier: tenantA.loginCode, password: "PasswordA1!" });
+            expect(resA.status).toBe(200);
+            expect(resA.body.data.user.id).toBe(tenantA.id);
+
+            const resB = await testRequest().post("/api/v1/auth/login").send({ identifier: tenantB.loginCode, password: "PasswordB1!" });
+            expect(resB.status).toBe(200);
+            expect(resB.body.data.user.id).toBe(tenantB.id);
+        });
     });
 
     describe("POST /api/v1/auth/refresh and /logout", () => {
         it("rotates the refresh token and revokes the old one", async () => {
-            await createUser({ email: "refresh@example.com", password: "Password123!" });
+            await createUser({ email: "refresh@example.com", password: "Password123!", role: "owner" });
             const loginRes = await testRequest().post("/api/v1/auth/login").send({
-                email: "refresh@example.com",
+                identifier: "refresh@example.com",
                 password: "Password123!"
             });
             const { refreshToken } = loginRes.body.data;
@@ -130,9 +197,9 @@ describe("Auth module", () => {
         });
 
         it("treats replay of an already-rotated token as theft and revokes the session it rotated into", async () => {
-            await createUser({ email: "reuse@example.com", password: "Password123!" });
+            await createUser({ email: "reuse@example.com", password: "Password123!", role: "owner" });
             const loginRes = await testRequest().post("/api/v1/auth/login").send({
-                email: "reuse@example.com",
+                identifier: "reuse@example.com",
                 password: "Password123!"
             });
             const originalToken = loginRes.body.data.refreshToken;
@@ -153,9 +220,9 @@ describe("Auth module", () => {
         });
 
         it("logout revokes the refresh token", async () => {
-            await createUser({ email: "logout@example.com", password: "Password123!" });
+            await createUser({ email: "logout@example.com", password: "Password123!", role: "owner" });
             const loginRes = await testRequest().post("/api/v1/auth/login").send({
-                email: "logout@example.com",
+                identifier: "logout@example.com",
                 password: "Password123!"
             });
             const { refreshToken } = loginRes.body.data;
@@ -169,11 +236,11 @@ describe("Auth module", () => {
     });
 
     describe("Password reset flow", () => {
-        it("allows resetting the password with a valid token", async () => {
+        it("allows an owner to reset their password via email", async () => {
             const mockedSendMail = emailService.sendMail as jest.Mock;
-            const { user } = await createUser({ email: "reset@example.com", password: "OldPassword1!" });
+            const { user } = await createUser({ email: "reset@example.com", password: "OldPassword1!", role: "owner" });
 
-            const forgotRes = await testRequest().post("/api/v1/auth/forgot-password").send({ email: user.email });
+            const forgotRes = await testRequest().post("/api/v1/auth/forgot-password").send({ identifier: user.email });
             expect(forgotRes.status).toBe(200);
             expect(mockedSendMail).toHaveBeenCalledTimes(1);
 
@@ -186,10 +253,45 @@ describe("Auth module", () => {
             expect(resetRes.status).toBe(200);
 
             const loginRes = await testRequest().post("/api/v1/auth/login").send({
-                email: user.email,
+                identifier: user.email,
                 password: "NewPassword1!"
             });
             expect(loginRes.status).toBe(200);
+        });
+
+        it("allows a tenant to reset their password via login code, sending the link to their email", async () => {
+            const mockedSendMail = emailService.sendMail as jest.Mock;
+            const { user: tenant } = await createUser({ email: "tenant-reset@example.com", password: "OldPassword1!", role: "tenant" });
+
+            const forgotRes = await testRequest().post("/api/v1/auth/forgot-password").send({ identifier: tenant.loginCode });
+            expect(forgotRes.status).toBe(200);
+            expect(mockedSendMail).toHaveBeenCalledTimes(1);
+            expect(mockedSendMail.mock.calls[0][0].to).toBe(tenant.email);
+
+            const html = mockedSendMail.mock.calls[0][0].html as string;
+            const token = extractToken(html);
+
+            const resetRes = await testRequest()
+                .post("/api/v1/auth/reset-password")
+                .send({ token, newPassword: "NewPassword1!" });
+            expect(resetRes.status).toBe(200);
+
+            const loginRes = await testRequest().post("/api/v1/auth/login").send({
+                identifier: tenant.loginCode,
+                password: "NewPassword1!"
+            });
+            expect(loginRes.status).toBe(200);
+        });
+
+        it("does not let a tenant reset their password via email", async () => {
+            const mockedSendMail = emailService.sendMail as jest.Mock;
+            const { user: tenant } = await createUser({ email: "tenant-noreset@example.com", password: "OldPassword1!", role: "tenant" });
+
+            const forgotRes = await testRequest().post("/api/v1/auth/forgot-password").send({ identifier: tenant.email });
+            // Deliberately indistinguishable from "no such account" — 200,
+            // no email sent.
+            expect(forgotRes.status).toBe(200);
+            expect(mockedSendMail).not.toHaveBeenCalled();
         });
 
         it("rejects an invalid reset token", async () => {
@@ -216,7 +318,7 @@ describe("Auth module", () => {
 
             const loginRes = await testRequest()
                 .post("/api/v1/auth/login")
-                .send({ email: user.email, password: "BrandNewPassword1!" });
+                .send({ identifier: user.loginCode, password: "BrandNewPassword1!" });
             expect(loginRes.status).toBe(200);
         });
 

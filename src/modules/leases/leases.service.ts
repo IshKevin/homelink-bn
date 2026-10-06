@@ -15,7 +15,7 @@ import {
 } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { generateRawToken, hashToken } from "../../common/utils/jwt.util";
-import { hashPassword, generateTempPassword } from "../../common/utils/password.util";
+import { hashPassword, generateTempPassword, generateLoginCode } from "../../common/utils/password.util";
 import { getTenantSummaries, getTenantSummary } from "../../common/utils/tenantSummary.util";
 import { buildObjectKey, deleteObject, getPresignedDownloadUrl, uploadBuffer } from "../../services/storage.service";
 import { renderHtmlToPdf } from "../../services/pdf.service";
@@ -187,6 +187,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
     // way it usually isn't for this app's simpler single-insert operations).
     let rawPasswordResetToken: string | undefined;
     let temporaryPassword: string | undefined;
+    let loginCode: string | undefined;
     const { lease, tenant } = await db.transaction(async (tx) => {
         const [freshUnit] = await tx.select().from(propertyUnits).where(eq(propertyUnits.id, unit.id)).limit(1);
         if (!freshUnit || freshUnit.status !== "available") {
@@ -195,30 +196,42 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
 
         let tenantRow: typeof users.$inferSelect;
         if (input.newTenant) {
-            const [existing] = await tx.select().from(users).where(eq(users.email, input.newTenant.email)).limit(1);
-            if (existing) {
-                throw AppError.conflict("An account with this email already exists");
-            }
-
+            // No duplicate-email check here by design — the same email can
+            // now be associated with several separate tenant accounts (e.g.
+            // one person leasing units from different landlords, each a
+            // distinct account with its own login code).
+            //
             // A landlord-created tenant often can't check email reliably, so
-            // this is returned once (below, outside the transaction) for the
-            // landlord to relay directly — paired with mustChangePassword so
-            // the tenant is still forced to pick their own on first login.
+            // temporaryPassword is returned once (below, outside the
+            // transaction) for the landlord to relay directly — paired with
+            // mustChangePassword so the tenant is still forced to pick their
+            // own on first login.
             temporaryPassword = generateTempPassword();
             const passwordHash = await hashPassword(temporaryPassword);
-            const [created] = await tx
-                .insert(users)
-                .values({
-                    email: input.newTenant.email,
-                    passwordHash,
-                    firstName: input.newTenant.firstName,
-                    lastName: input.newTenant.lastName,
-                    phone: input.newTenant.phone,
-                    role: "tenant",
-                    isApproved: true,
-                    mustChangePassword: true
-                })
-                .returning();
+
+            // loginCode is this tenant's permanent login identifier — retry
+            // on the (astronomically unlikely) chance of a collision against
+            // the unique index.
+            let created: typeof users.$inferSelect | undefined;
+            for (let attempt = 0; attempt < 5 && !created; attempt++) {
+                loginCode = generateLoginCode();
+                const [existingCode] = await tx.select().from(users).where(eq(users.loginCode, loginCode)).limit(1);
+                if (existingCode) continue;
+                [created] = await tx
+                    .insert(users)
+                    .values({
+                        email: input.newTenant.email,
+                        loginCode,
+                        passwordHash,
+                        firstName: input.newTenant.firstName,
+                        lastName: input.newTenant.lastName,
+                        phone: input.newTenant.phone,
+                        role: "tenant",
+                        isApproved: true,
+                        mustChangePassword: true
+                    })
+                    .returning();
+            }
             if (!created) throw AppError.internal("Failed to create tenant");
             tenantRow = created;
 
@@ -277,7 +290,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
         await sendMail({
             to: tenant.email,
             subject: "Set your HomeLink password",
-            html: setPasswordTemplate(tenant.firstName, link, property.title, unit.label)
+            html: setPasswordTemplate(tenant.firstName, link, property.title, unit.label, loginCode)
         });
     }
 
@@ -296,7 +309,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
         email: tenant.email,
         phone: tenant.phone
     };
-    return { ...lease, tenant: tenantSummary, temporaryPassword };
+    return { ...lease, tenant: tenantSummary, temporaryPassword, loginCode };
 }
 
 export async function listLeases(

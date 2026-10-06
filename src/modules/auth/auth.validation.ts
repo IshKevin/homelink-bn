@@ -9,13 +9,18 @@ export const registerSchema = {
         firstName: z.string().min(1).max(100),
         lastName: z.string().min(1).max(100),
         phone: z.string().min(5).max(30),
-        role: z.enum(["tenant", "owner", "agent"])
+        // Tenant self-registration is retired — tenant accounts are only
+        // ever created by a landlord/agent (POST /leases newTenant), which
+        // hands them a permanent login code instead of an email identity.
+        role: z.enum(["owner", "agent"])
     })
 };
 
 export const loginSchema = {
     body: z.object({
-        email: z.string().email().max(255),
+        // An email (owner/agent/admin) or a tenant's login code — the
+        // service tells them apart by whether it contains "@".
+        identifier: z.string().min(1).max(255),
         password: z.string().min(1).max(72)
     })
 };
@@ -35,7 +40,8 @@ export const refreshSchema = {
 
 export const forgotPasswordSchema = {
     body: z.object({
-        email: z.string().email().max(255)
+        // An email (owner/agent/admin) or a tenant's login code.
+        identifier: z.string().min(1).max(255)
     })
 };
 

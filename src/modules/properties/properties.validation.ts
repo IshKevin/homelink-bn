@@ -95,7 +95,10 @@ export const generateUnitsSchema = {
         // real rent gets set per unit afterward.
         rentAmount: z.number().positive().optional(),
         scale: z.number().positive().optional(),
-        deposit: z.number().nonnegative().optional()
+        deposit: z.number().nonnegative().optional(),
+        // Omit to auto-continue from the floor's current unit count; pass 0
+        // to force numbering from Unit 1 regardless.
+        startAt: z.number().int().nonnegative().optional()
     })
 };
 

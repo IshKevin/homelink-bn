@@ -86,6 +86,9 @@ export interface GenerateUnitsInput {
     rentAmount?: number;
     scale?: number;
     deposit?: number;
+    // Omit to auto-continue from this floor's current unit count. Pass 0 to
+    // force numbering from Unit 1 regardless of what's already there.
+    startAt?: number;
 }
 
 export interface ListAvailableUnitsFilters {
@@ -616,9 +619,24 @@ export async function generateUnits(propertyId: string, requester: Requester, in
     const scale = input.scale !== undefined ? String(input.scale) : undefined;
     const deposit = input.deposit !== undefined ? String(input.deposit) : undefined;
 
+    // Numbering continues from this floor's current unit count by default —
+    // otherwise a second "Generate units" call on a floor that already has
+    // units collides with the ones already there. The caller can override
+    // this with an explicit `startAt` (e.g. the frontend offers "start from
+    // Unit 1 anyway" when the existing units were renamed to something that
+    // won't actually collide).
+    let startIndex = input.startAt;
+    if (startIndex === undefined) {
+        const [existing] = await db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(propertyUnits)
+            .where(and(eq(propertyUnits.floorId, floor.id), isNull(propertyUnits.deletedAt)));
+        startIndex = existing?.count ?? 0;
+    }
+
     const values: (typeof propertyUnits.$inferInsert)[] = Array.from({ length: input.count }, (_, i) => ({
         propertyId,
-        label: `${floor.name} - Unit ${i + 1}`,
+        label: `${floor.name} - Unit ${startIndex + i + 1}`,
         unitType: input.unitType,
         floorId: floor.id,
         bedrooms,

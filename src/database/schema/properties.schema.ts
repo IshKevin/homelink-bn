@@ -104,7 +104,13 @@ export const propertyUnits = pgTable(
             .references(() => floors.id, { onDelete: "cascade" }),
         bedrooms: numeric("bedrooms", { precision: 4, scale: 0 }),
         bathrooms: numeric("bathrooms", { precision: 4, scale: 0 }),
-        rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull(),
+        // Defaults to 0 rather than being required — bulk-generated units
+        // (POST /properties/:id/units/generate) are meant to have their real
+        // rent set individually afterward, not a shared guess at creation time.
+        rentAmount: numeric("rent_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+        // Unit size/area — same "scale" concept as floors.scale, kept nullable
+        // since it's optional at creation and editable afterward.
+        scale: numeric("scale", { precision: 10, scale: 2 }),
         deposit: numeric("deposit", { precision: 12, scale: 2 }),
         status: unitStatusEnum("status").notNull().default("available"),
         // Soft-delete only: a unit gets archived, never hard-deleted, once it

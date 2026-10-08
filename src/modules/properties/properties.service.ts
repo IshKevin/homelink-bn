@@ -50,7 +50,10 @@ export interface CreateUnitInput {
     floorId: string;
     bedrooms?: number;
     bathrooms?: number;
-    rentAmount: number;
+    // Omit to leave it at the column default (0) — set the real rent per
+    // unit afterward via updateUnit.
+    rentAmount?: number;
+    scale?: number;
     deposit?: number;
 }
 
@@ -67,6 +70,7 @@ export interface UpdateUnitInput {
     bedrooms?: number;
     bathrooms?: number;
     rentAmount?: number;
+    scale?: number;
     deposit?: number;
     status?: ManualUnitStatus;
 }
@@ -77,7 +81,10 @@ export interface GenerateUnitsInput {
     unitType?: string;
     bedrooms?: number;
     bathrooms?: number;
-    rentAmount: number;
+    // Omit to leave every generated unit at the column default (0) — set
+    // real rent per unit afterward via updateUnit.
+    rentAmount?: number;
+    scale?: number;
     deposit?: number;
 }
 
@@ -449,7 +456,10 @@ export async function createUnit(propertyId: string, requester: Requester, input
             floorId: input.floorId,
             bedrooms: input.bedrooms !== undefined ? String(input.bedrooms) : undefined,
             bathrooms: input.bathrooms !== undefined ? String(input.bathrooms) : undefined,
-            rentAmount: String(input.rentAmount),
+            // Omitted entirely (rather than passed as "undefined") so the
+            // column default (0) applies when not given.
+            ...(input.rentAmount !== undefined ? { rentAmount: String(input.rentAmount) } : {}),
+            scale: input.scale !== undefined ? String(input.scale) : undefined,
             deposit: input.deposit !== undefined ? String(input.deposit) : undefined,
             status: "available"
         })
@@ -538,11 +548,12 @@ export async function updateUnit(propertyId: string, unitId: string, requester: 
         throw AppError.conflict("This unit currently has an active tenant — end that lease before changing its status");
     }
 
-    const { bedrooms, bathrooms, rentAmount, deposit, ...rest } = input;
+    const { bedrooms, bathrooms, rentAmount, scale, deposit, ...rest } = input;
     const updates: Partial<typeof propertyUnits.$inferInsert> = { ...rest };
     if (bedrooms !== undefined) updates.bedrooms = String(bedrooms);
     if (bathrooms !== undefined) updates.bathrooms = String(bathrooms);
     if (rentAmount !== undefined) updates.rentAmount = String(rentAmount);
+    if (scale !== undefined) updates.scale = String(scale);
     if (deposit !== undefined) updates.deposit = String(deposit);
     updates.updatedAt = new Date();
 
@@ -598,7 +609,11 @@ export async function generateUnits(propertyId: string, requester: Requester, in
 
     const bedrooms = input.bedrooms !== undefined ? String(input.bedrooms) : undefined;
     const bathrooms = input.bathrooms !== undefined ? String(input.bathrooms) : undefined;
-    const rentAmount = String(input.rentAmount);
+    // Left undefined (rather than defaulted here) when not given so the
+    // column default (0) applies — the real rent gets set per unit
+    // afterward via updateUnit, same as scale.
+    const rentAmount = input.rentAmount !== undefined ? String(input.rentAmount) : undefined;
+    const scale = input.scale !== undefined ? String(input.scale) : undefined;
     const deposit = input.deposit !== undefined ? String(input.deposit) : undefined;
 
     const values: (typeof propertyUnits.$inferInsert)[] = Array.from({ length: input.count }, (_, i) => ({
@@ -609,6 +624,7 @@ export async function generateUnits(propertyId: string, requester: Requester, in
         bedrooms,
         bathrooms,
         rentAmount,
+        scale,
         deposit,
         status: "available"
     }));

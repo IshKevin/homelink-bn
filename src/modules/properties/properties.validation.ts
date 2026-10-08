@@ -58,7 +58,10 @@ export const createUnitSchema = {
         floorId: z.string().uuid(),
         bedrooms: z.number().int().nonnegative().optional(),
         bathrooms: z.number().int().nonnegative().optional(),
-        rentAmount: z.number().positive(),
+        // Omit to leave it at the column default (0) — meant for bulk
+        // creation where the real rent gets set per unit afterward.
+        rentAmount: z.number().positive().optional(),
+        scale: z.number().positive().optional(),
         deposit: z.number().nonnegative().optional()
     })
 };
@@ -73,6 +76,7 @@ export const updateUnitSchema = {
             bedrooms: z.number().int().nonnegative().optional(),
             bathrooms: z.number().int().nonnegative().optional(),
             rentAmount: z.number().positive().optional(),
+            scale: z.number().positive().optional(),
             deposit: z.number().nonnegative().optional(),
             status: z.enum(manualUnitStatusValues).optional()
         })
@@ -86,7 +90,11 @@ export const generateUnitsSchema = {
         unitType: shortText().optional(),
         bedrooms: z.number().int().nonnegative().optional(),
         bathrooms: z.number().int().nonnegative().optional(),
-        rentAmount: z.number().positive(),
+        // Omit to leave every generated unit at the column default (0) —
+        // the shared "default rent" bulk-generate used to require is gone;
+        // real rent gets set per unit afterward.
+        rentAmount: z.number().positive().optional(),
+        scale: z.number().positive().optional(),
         deposit: z.number().nonnegative().optional()
     })
 };

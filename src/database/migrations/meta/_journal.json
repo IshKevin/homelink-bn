@@ -120,6 +120,13 @@
       "when": 1791286345770,
       "tag": "0016_tenant_login_code",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791479058114,
+      "tag": "0017_add_unit_scale",
+      "breakpoints": true
     }
   ]
 }

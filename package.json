@@ -17,6 +17,7 @@
     "db:studio": "drizzle-kit studio",
     "seed:admin": "ts-node --transpile-only src/scripts/seed-admin.ts",
     "seed:demo": "ts-node --transpile-only src/scripts/seed-demo-users.ts",
+    "verify:get-started": "ts-node --transpile-only src/scripts/verify-get-started-flow.ts",
     "test": "NODE_ENV=test jest --runInBand",
     "test:watch": "NODE_ENV=test jest --runInBand --watch",
     "lint": "eslint .",

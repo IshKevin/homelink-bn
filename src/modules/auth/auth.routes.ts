@@ -32,10 +32,9 @@ router.use(authRateLimiter);
  *   schemas:
  *     RegisterInput:
  *       type: object
- *       required: [email, password, firstName, lastName, phone, role]
+ *       required: [email, firstName, lastName, phone, role]
  *       properties:
  *         email: { type: string, format: email }
- *         password: { type: string, format: password, minLength: 8 }
  *         firstName: { type: string }
  *         lastName: { type: string }
  *         phone: { type: string }
@@ -49,7 +48,12 @@ router.use(authRateLimiter);
  * /auth/register:
  *   post:
  *     tags: [Auth]
- *     summary: Register as a property owner or agent (tenant self-registration is retired)
+ *     summary: Request a property owner or agent account (tenant self-registration is retired)
+ *     description: >
+ *       No password is collected here — this creates a pending request with
+ *       no tokens issued. An admin must approve it (PATCH
+ *       /admin/users/{id}/approve) before the user can log in; approval
+ *       emails them a link to set their password.
  *     security: []
  *     requestBody:
  *       required: true
@@ -58,7 +62,7 @@ router.use(authRateLimiter);
  *           schema: { $ref: '#/components/schemas/RegisterInput' }
  *     responses:
  *       201:
- *         description: Registration successful
+ *         description: Registration request received, pending admin approval
  *         content:
  *           application/json:
  *             schema:

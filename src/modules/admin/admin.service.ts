@@ -109,33 +109,50 @@ export async function updateUserStatus(adminId: string, userId: string, isActive
     return toPublicUser(updated);
 }
 
-export async function approveAgent(adminId: string, userId: string) {
+export async function approveUser(adminId: string, userId: string) {
     const user = await getUserOrThrow(userId);
 
-    if (user.role !== "agent") {
-        throw AppError.badRequest("User is not an agent");
+    if (user.role !== "owner" && user.role !== "agent") {
+        throw AppError.badRequest("Only landlord or property manager requests can be approved this way");
     }
 
-    if (user.isApproved !== false) {
-        throw AppError.conflict("Agent is already approved");
+    if (user.isApproved) {
+        throw AppError.conflict("This account is already approved");
     }
 
     const [updated] = await db.update(users).set({ isApproved: true }).where(eq(users.id, userId)).returning();
-    if (!updated) throw AppError.internal("Failed to approve agent");
+    if (!updated) throw AppError.internal("Failed to approve account");
 
     await recordAction({
         userId: adminId,
-        action: "admin.agent.approve",
+        action: "admin.user.approve",
         entity: "user",
         entityId: userId
     });
 
+    // No usable password exists yet (register() only ever stores a random
+    // placeholder) — same set-password link + token used by createHouseOwner
+    // and the tenant invite flow is how this account gets its first real one.
+    const rawToken = generateRawToken();
+    await db.insert(passwordResetTokens).values({
+        userId: updated.id,
+        tokenHash: hashToken(rawToken),
+        expiresAt: addHours(new Date(), 24)
+    });
+
+    const link = `${env.frontendUrl}/set-password?token=${rawToken}`;
+    await sendMail({
+        to: updated.email,
+        subject: "Your HomeLink account has been approved",
+        html: setPasswordTemplate(updated.firstName, link)
+    });
+
     await notify({
         userId,
-        type: "agent.approved",
-        title: "Agent account approved",
-        message: "Your agent account has been approved. You can now start managing properties.",
-        sendEmail: true
+        type: "account.approved",
+        title: "Account approved",
+        message: "Your HomeLink account has been approved. Check your email to set your password and log in.",
+        sendEmail: false
     });
 
     return toPublicUser(updated);

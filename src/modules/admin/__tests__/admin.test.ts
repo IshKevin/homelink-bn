@@ -103,27 +103,58 @@ describe("Admin module", () => {
         });
     });
 
-    describe("PATCH /api/v1/admin/users/:id/approve-agent", () => {
-        it("approves a pending agent; rejects already-approved and non-agent users", async () => {
+    describe("PATCH /api/v1/admin/users/:id/approve", () => {
+        it("approves a pending agent; rejects already-approved and non-owner/agent users", async () => {
             const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
             const { user: agent } = await createUser({ role: "agent", isApproved: false });
             const { user: tenant } = await createUser({ role: "tenant" });
 
             const res = await testRequest()
-                .patch(`/api/v1/admin/users/${agent.id}/approve-agent`)
+                .patch(`/api/v1/admin/users/${agent.id}/approve`)
                 .set("Authorization", `Bearer ${adminToken}`);
             expect(res.status).toBe(200);
             expect(res.body.data.isApproved).toBe(true);
 
             const conflictRes = await testRequest()
-                .patch(`/api/v1/admin/users/${agent.id}/approve-agent`)
+                .patch(`/api/v1/admin/users/${agent.id}/approve`)
                 .set("Authorization", `Bearer ${adminToken}`);
             expect(conflictRes.status).toBe(409);
 
             const badRes = await testRequest()
-                .patch(`/api/v1/admin/users/${tenant.id}/approve-agent`)
+                .patch(`/api/v1/admin/users/${tenant.id}/approve`)
                 .set("Authorization", `Bearer ${adminToken}`);
             expect(badRes.status).toBe(400);
+        });
+
+        it("approves a pending owner and emails a working set-password link", async () => {
+            const { accessToken: adminToken } = await createAuthedUser({ role: "admin" });
+            const { user: owner } = await createUser({
+                email: "pending-owner2@example.com",
+                role: "owner",
+                isApproved: false
+            });
+            const mockedSendMail = emailService.sendMail as jest.Mock;
+            mockedSendMail.mockClear();
+
+            const res = await testRequest()
+                .patch(`/api/v1/admin/users/${owner.id}/approve`)
+                .set("Authorization", `Bearer ${adminToken}`);
+            expect(res.status).toBe(200);
+            expect(res.body.data.isApproved).toBe(true);
+            expect(mockedSendMail).toHaveBeenCalledTimes(1);
+
+            const html = mockedSendMail.mock.calls[0][0].html as string;
+            const token = extractToken(html);
+
+            const setPasswordRes = await testRequest()
+                .post("/api/v1/auth/reset-password")
+                .send({ token, newPassword: "NewOwnerPass1!" });
+            expect(setPasswordRes.status).toBe(200);
+
+            const loginRes = await testRequest()
+                .post("/api/v1/auth/login")
+                .send({ identifier: owner.email, password: "NewOwnerPass1!" });
+            expect(loginRes.status).toBe(200);
         });
     });
 

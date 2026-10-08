@@ -17,10 +17,9 @@ function extractToken(html: string): string {
 
 describe("Auth module", () => {
     describe("POST /api/v1/auth/register", () => {
-        it("registers an owner and returns tokens", async () => {
+        it("creates a pending owner request with no tokens and no usable password", async () => {
             const res = await testRequest().post("/api/v1/auth/register").send({
                 email: "owner@example.com",
-                password: "Password123!",
                 firstName: "Jane",
                 lastName: "Doe",
                 phone: "0788123456",
@@ -28,17 +27,21 @@ describe("Auth module", () => {
             });
 
             expect(res.status).toBe(201);
-            expect(res.body.data.accessToken).toBeDefined();
-            expect(res.body.data.refreshToken).toBeDefined();
+            expect(res.body.data.accessToken).toBeUndefined();
+            expect(res.body.data.refreshToken).toBeUndefined();
             expect(res.body.data.user.email).toBe("owner@example.com");
             expect(res.body.data.user.passwordHash).toBeUndefined();
-            expect(res.body.data.user.isApproved).toBe(true);
+            expect(res.body.data.user.isApproved).toBe(false);
+
+            const loginRes = await testRequest()
+                .post("/api/v1/auth/login")
+                .send({ identifier: "owner@example.com", password: "anything" });
+            expect(loginRes.status).toBe(401);
         });
 
         it("rejects self-registration as a tenant — tenant accounts are only created via the add-tenant flow", async () => {
             const res = await testRequest().post("/api/v1/auth/register").send({
                 email: "wannabe-tenant@example.com",
-                password: "Password123!",
                 firstName: "Jane",
                 lastName: "Doe",
                 phone: "0788123456",
@@ -51,7 +54,6 @@ describe("Auth module", () => {
         it("marks new agents as not-yet-approved", async () => {
             const res = await testRequest().post("/api/v1/auth/register").send({
                 email: "agent@example.com",
-                password: "Password123!",
                 firstName: "Alex",
                 lastName: "Agent",
                 phone: "0788123457",
@@ -65,7 +67,6 @@ describe("Auth module", () => {
         it("rejects invalid input", async () => {
             const res = await testRequest().post("/api/v1/auth/register").send({
                 email: "not-an-email",
-                password: "short",
                 firstName: "",
                 lastName: "Doe",
                 role: "tenant"
@@ -80,7 +81,6 @@ describe("Auth module", () => {
 
             const res = await testRequest().post("/api/v1/auth/register").send({
                 email: "dupe@example.com",
-                password: "Password123!",
                 firstName: "Jane",
                 lastName: "Doe",
                 phone: "0788123458",
@@ -88,6 +88,24 @@ describe("Auth module", () => {
             });
 
             expect(res.status).toBe(409);
+        });
+    });
+
+    describe("Login blocks a pending (not-yet-approved) account", () => {
+        it("rejects login for an unapproved owner even with the right password", async () => {
+            const { user: owner } = await createUser({
+                email: "pending-owner@example.com",
+                password: "Password123!",
+                role: "owner",
+                isApproved: false
+            });
+
+            const res = await testRequest().post("/api/v1/auth/login").send({
+                identifier: owner.email,
+                password: "Password123!"
+            });
+
+            expect(res.status).toBe(403);
         });
     });
 

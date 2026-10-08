@@ -21,7 +21,6 @@ import { loginsTotal, registrationsTotal } from "../../config/metrics";
 
 export interface RegisterInput {
     email: string;
-    password: string;
     firstName: string;
     lastName: string;
     phone: string;
@@ -104,7 +103,7 @@ async function issueLoginChallenge(user: typeof users.$inferSelect, meta: Reques
     return { requiresVerification: true as const, challengeId: challenge.id };
 }
 
-export async function register(input: RegisterInput, meta: RequestMeta = {}) {
+export async function register(input: RegisterInput) {
     // Scoped to non-tenant roles to match the partial unique index — a
     // tenant account sharing this email (now allowed) must not block a
     // legitimate owner/agent registration.
@@ -117,7 +116,13 @@ export async function register(input: RegisterInput, meta: RequestMeta = {}) {
         throw AppError.conflict("An account with this email already exists");
     }
 
-    const passwordHash = await hashPassword(input.password);
+    // No password is collected at sign-up — every self-registration is a
+    // pending request until an admin approves it, at which point
+    // admin.service.ts's approveUser emails a set-password link (same
+    // mechanism as createHouseOwner / the tenant invite flow). The hash here
+    // is just a placeholder so the NOT NULL column is satisfied; it's never
+    // handed to the user and can't be used to log in.
+    const passwordHash = await hashPassword(generateRawToken());
     const [user] = await db
         .insert(users)
         .values({
@@ -127,7 +132,7 @@ export async function register(input: RegisterInput, meta: RequestMeta = {}) {
             lastName: input.lastName,
             phone: input.phone,
             role: input.role,
-            isApproved: input.role === "agent" ? false : true
+            isApproved: false
         })
         .returning();
 
@@ -136,8 +141,7 @@ export async function register(input: RegisterInput, meta: RequestMeta = {}) {
     await recordAction({ userId: user.id, action: "user.register", entity: "user", entityId: user.id });
     registrationsTotal.inc({ role: user.role });
 
-    const tokens = await issueTokenPair(user, meta);
-    return { user: toPublicUser(user), ...tokens };
+    return { user: toPublicUser(user) };
 }
 
 const DEMO_EMAIL_DOMAIN = "@homelink.dev";
@@ -166,6 +170,15 @@ export async function login(identifier: string, password: string, meta: RequestM
     if (!user.isActive) {
         loginsTotal.inc({ outcome: "deactivated" });
         throw AppError.forbidden("This account has been deactivated");
+    }
+    // Owner/agent self-registrations start unapproved and have no usable
+    // password yet (see register() above) — this mostly can't be reached in
+    // practice, but it's the correct, honest error for a pending account
+    // that somehow gets here (e.g. a pre-existing unapproved agent from
+    // before this account went through approveUser).
+    if (!user.isApproved) {
+        loginsTotal.inc({ outcome: "pending_approval" });
+        throw AppError.forbidden("Your account is pending admin approval. We'll email you once it's approved.");
     }
 
     // Seeded demo accounts (src/scripts/seed-demo-users.ts) are shared by

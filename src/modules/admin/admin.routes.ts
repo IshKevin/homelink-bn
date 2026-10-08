@@ -18,9 +18,9 @@ import {
     upsertSettingSchema
 } from "./admin.validation";
 import {
-    approveAgentHandler,
     approveIdentityVerificationHandler,
     approveSuspensionRequestHandler,
+    approveUserHandler,
     createHouseOwnerHandler,
     deactivatePropertyHandler,
     getSettingsHandler,
@@ -199,10 +199,14 @@ router.patch("/users/:id/role", validate(updateUserRoleSchema), updateUserRoleHa
 
 /**
  * @openapi
- * /admin/users/{id}/approve-agent:
+ * /admin/users/{id}/approve:
  *   patch:
  *     tags: [Admin]
- *     summary: Approve a pending agent account (admin only)
+ *     summary: Approve a pending landlord or property manager sign-up request (admin only)
+ *     description: >
+ *       Flips the account to approved and emails the user a set-password link
+ *       (self-registered owner/agent accounts have no usable password until
+ *       this happens).
  *     parameters:
  *       - in: path
  *         name: id
@@ -210,25 +214,25 @@ router.patch("/users/:id/role", validate(updateUserRoleSchema), updateUserRoleHa
  *         schema: { type: string, format: uuid }
  *     responses:
  *       200:
- *         description: Agent approved
+ *         description: Account approved
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/SuccessResponse'
  *       400:
- *         description: User is not an agent
+ *         description: User is not a landlord or property manager
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  *       409:
- *         description: Agent is already approved
+ *         description: Account is already approved
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-router.patch("/users/:id/approve-agent", approveAgentHandler);
+router.patch("/users/:id/approve", approveUserHandler);
 
 /**
  * @openapi

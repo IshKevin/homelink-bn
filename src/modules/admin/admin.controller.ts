@@ -45,9 +45,9 @@ export async function updateUserRoleHandler(req: Request, res: Response) {
     return sendSuccess(res, { message: "User role updated", data: user });
 }
 
-export async function approveAgentHandler(req: Request, res: Response) {
-    const user = await adminService.approveAgent(req.user!.id, req.params["id"] as string);
-    return sendSuccess(res, { message: "Agent approved", data: user });
+export async function approveUserHandler(req: Request, res: Response) {
+    const user = await adminService.approveUser(req.user!.id, req.params["id"] as string);
+    return sendSuccess(res, { message: "Account approved", data: user });
 }
 
 export async function listIdentityVerificationsHandler(req: Request, res: Response) {

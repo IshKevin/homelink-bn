@@ -7,8 +7,12 @@ function requestMeta(req: Request): authService.RequestMeta {
 }
 
 export async function registerHandler(req: Request, res: Response) {
-    const result = await authService.register(req.body, requestMeta(req));
-    return sendSuccess(res, { statusCode: 201, message: "Registration successful", data: result });
+    const result = await authService.register(req.body);
+    return sendSuccess(res, {
+        statusCode: 201,
+        message: "Registration request received — pending admin approval",
+        data: result
+    });
 }
 
 export async function loginHandler(req: Request, res: Response) {

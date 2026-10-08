@@ -405,10 +405,7 @@ export async function getLandlordPerformanceReport(_admin: Requester): Promise<R
             Email: owner.email,
             Phone: owner.phone,
             Properties: ownedProperties.length,
-            // Owners are always isApproved (only agents require approval —
-            // see auth.service.ts's register()), so isActive is the only real
-            // signal here: no separate "pending" state exists for this role.
-            Status: owner.isActive ? "Active" : "Suspended",
+            Status: !owner.isApproved ? "Pending" : owner.isActive ? "Active" : "Suspended",
             Registered: format(owner.createdAt, "yyyy-MM-dd")
         });
     }

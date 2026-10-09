@@ -53,6 +53,7 @@ const unitStatusValues = ["available", "occupied", "maintenance", "inactive"] as
 export const createUnitSchema = {
     body: z.object({
         label: shortText(),
+        name: shortText().optional(),
         unitType: shortText().optional(),
         description: longText().optional(),
         floorId: z.string().uuid(),
@@ -69,7 +70,10 @@ export const createUnitSchema = {
 export const updateUnitSchema = {
     body: z
         .object({
-            label: shortText().optional(),
+            // No `label` here — it's the system-generated identifier
+            // (see generateUnits) and is never user-editable. `name` is the
+            // landlord-facing field for a custom display name instead.
+            name: shortText().optional(),
             unitType: shortText().optional(),
             description: longText().optional(),
             floorId: z.string().uuid().optional(),

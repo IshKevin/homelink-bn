@@ -45,6 +45,7 @@ export interface UpdateFloorInput {
 
 export interface CreateUnitInput {
     label: string;
+    name?: string;
     unitType?: string;
     description?: string;
     floorId: string;
@@ -62,8 +63,10 @@ export interface CreateUnitInput {
 // never a manual landlord edit. See assertManualStatus below.
 export type ManualUnitStatus = "available" | "maintenance" | "inactive";
 
+// No `label` — it's the system-generated identifier (see generateUnits) and
+// is never user-editable. `name` is the landlord-facing field instead.
 export interface UpdateUnitInput {
-    label?: string;
+    name?: string;
     unitType?: string;
     description?: string;
     floorId?: string;
@@ -422,10 +425,10 @@ async function getUnitOrThrow(unitId: string): Promise<PropertyUnitRow> {
  * scoped the same way — this is just what turns that into a clean 409
  * instead of a raw constraint error surfacing to the client).
  */
-async function assertNoDuplicateLabel(propertyId: string, label: string, excludeUnitId?: string): Promise<void> {
+async function assertNoDuplicateLabel(propertyId: string, label: string): Promise<void> {
     const conditions = [eq(propertyUnits.propertyId, propertyId), eq(propertyUnits.label, label), isNull(propertyUnits.deletedAt)];
     const [existing] = await db.select({ id: propertyUnits.id }).from(propertyUnits).where(and(...conditions)).limit(1);
-    if (existing && existing.id !== excludeUnitId) {
+    if (existing) {
         throw AppError.conflict(`Unit number "${label}" already exists in this property`);
     }
 }
@@ -454,6 +457,7 @@ export async function createUnit(propertyId: string, requester: Requester, input
         .values({
             propertyId,
             label: input.label,
+            name: input.name,
             unitType: input.unitType,
             description: input.description,
             floorId: input.floorId,
@@ -534,9 +538,6 @@ export async function updateUnit(propertyId: string, unitId: string, requester: 
     const unit = await getUnitOrThrow(unitId);
     if (unit.propertyId !== propertyId) throw AppError.notFound("Unit not found");
 
-    if (input.label && input.label !== unit.label) {
-        await assertNoDuplicateLabel(propertyId, input.label, unitId);
-    }
     if (input.floorId) {
         await getFloorOrThrow(propertyId, input.floorId);
     }

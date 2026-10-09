@@ -94,7 +94,14 @@ export const propertyUnits = pgTable(
         propertyId: uuid("property_id")
             .notNull()
             .references(() => properties.id, { onDelete: "cascade" }),
+        // System-generated identifier (e.g. "Ground - Unit 1"), immutable
+        // after creation — see generateUnits. Never editable via updateUnit;
+        // `name` below is the landlord-facing field for that.
         label: varchar("label", { length: 100 }).notNull(),
+        // Optional custom display name (e.g. "Shop A", "Penthouse Suite"),
+        // distinct from `label` — the user can set/change this any time,
+        // unlike the system-generated label.
+        name: varchar("name", { length: 100 }),
         // Free-text descriptor (e.g. "2 Bedroom", "Shop", "Office") — distinct
         // from bedrooms/bathrooms, which stay numeric for filtering/search.
         unitType: varchar("unit_type", { length: 100 }),

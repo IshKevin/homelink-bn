@@ -1,0 +1,1 @@
+ALTER TABLE "property_units" ADD COLUMN "name" varchar(100);

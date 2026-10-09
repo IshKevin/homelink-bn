@@ -127,6 +127,13 @@
       "when": 1791479058114,
       "tag": "0017_add_unit_scale",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791532928065,
+      "tag": "0018_add_unit_name",
+      "breakpoints": true
     }
   ]
 }

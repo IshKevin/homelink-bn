@@ -12,26 +12,34 @@ function computeDueDate(today: Date, paymentDate: string | null): string {
     return format(setDate(today, clampedDay), "yyyy-MM-dd");
 }
 
-// Shared with signLease, which calls this inline on activation so a lease
-// has its current-period invoice the moment it goes active, rather than
-// waiting for this job's next daily run (up to ~24h later). Same
+// Shared with createLease/signLease, which call this inline on activation so
+// a lease has its current-period invoice the moment it goes active, rather
+// than waiting for this job's next daily run (up to ~24h later). Same
 // existing-invoice check either way, so there's no double-invoice risk.
 export async function ensureInvoiceForLease(lease: typeof leases.$inferSelect, today: Date): Promise<boolean> {
     const period = format(today, "yyyy-MM");
-    const [existing] = await db
+    const [existingForPeriod] = await db
         .select()
         .from(invoices)
         .where(and(eq(invoices.leaseId, lease.id), eq(invoices.period, period)))
         .limit(1);
 
-    if (existing) return false;
+    if (existingForPeriod) return false;
+
+    // The lease's very first invoice ever (not just this period's) folds in
+    // the security deposit, if one was agreed — the tenant's first payment
+    // covers both rent and deposit together, rather than tracking the
+    // deposit as a separate charge. Every later invoice is rent only.
+    const [anyExisting] = await db.select({ id: invoices.id }).from(invoices).where(eq(invoices.leaseId, lease.id)).limit(1);
+    const deposit = lease.deposit ? Number(lease.deposit) : 0;
+    const amountDue = !anyExisting && deposit > 0 ? String(Number(lease.rentAmount) + deposit) : lease.rentAmount;
 
     const invoiceNumber = await nextDocumentNumber("ACC-INV", today);
     await db.insert(invoices).values({
         invoiceNumber,
         leaseId: lease.id,
         period,
-        amountDue: lease.rentAmount,
+        amountDue,
         dueDate: computeDueDate(today, lease.paymentDate)
     });
     return true;

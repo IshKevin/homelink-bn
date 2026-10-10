@@ -115,7 +115,12 @@ describe("Leases module", () => {
                 });
 
             expect(res.status).toBe(201);
-            expect(res.body.data.status).toBe("pending_signatures");
+            // A brand-new tenant can't be asked to log in and sign before
+            // moving in — the lease is active immediately, no signature step.
+            expect(res.body.data.status).toBe("active");
+            expect(res.body.data.documentUrl).toBeTruthy();
+            expect(res.body.data.tenantSignedAt).toBeNull(); // active, but no signature ceremony actually happened
+            expect(res.body.data.ownerSignedAt).toBeNull();
 
             const [createdTenant] = await db.select().from(users).where(eq(users.email, "new-tenant@example.com")).limit(1);
             expect(createdTenant).toBeDefined();
@@ -137,6 +142,48 @@ describe("Leases module", () => {
 
             const [updatedUnit] = await db.select().from(propertyUnits).where(eq(propertyUnits.id, unit!.id)).limit(1);
             expect(updatedUnit!.status).toBe("occupied"); // occupied immediately on assignment, not only once signed
+
+            const moveRequestsRes = await testRequest()
+                .get(`/api/v1/leases/${res.body.data.id}/move-requests`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(moveRequestsRes.body.data.some((m: { type: string }) => m.type === "move_in")).toBe(true);
+
+            // startDate is in the past relative to "now", so the first
+            // invoice is created immediately rather than waiting for the
+            // next day's job run.
+            const [invoice] = await db.select().from(invoices).where(eq(invoices.leaseId, res.body.data.id)).limit(1);
+            expect(invoice).toBeDefined();
+            expect(Number(invoice!.amountDue)).toBe(800);
+        });
+
+        it("folds the security deposit into a new tenant's first invoice only", async () => {
+            const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
+            const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id)).limit(1);
+
+            const res = await testRequest()
+                .post("/api/v1/leases")
+                .set("Authorization", `Bearer ${ownerToken}`)
+                .send({
+                    propertyId: property.id,
+                    unitId: unit!.id,
+                    newTenant: {
+                        email: "deposit-tenant@example.com",
+                        firstName: "Deposit",
+                        lastName: "Tenant",
+                        phone: "0788000222"
+                    },
+                    startDate: "2026-01-01",
+                    rentAmount: 800,
+                    deposit: 500
+                });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.status).toBe("active");
+
+            const [invoice] = await db.select().from(invoices).where(eq(invoices.leaseId, res.body.data.id)).limit(1);
+            expect(invoice).toBeDefined();
+            expect(Number(invoice!.amountDue)).toBe(1300); // 800 rent + 500 deposit, first invoice only
         });
 
         it("does not return a temporaryPassword when assigning an existing tenant", async () => {
@@ -161,7 +208,7 @@ describe("Leases module", () => {
             expect(res.body.data.tenant).toMatchObject({ id: tenant.id });
         });
 
-        it("does not let a second tenant be assigned to a unit that already has a pending (unsigned) lease", async () => {
+        it("does not let a second tenant be assigned to a unit that's already occupied by a lease", async () => {
             const { user: owner, accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
             const property = await createProperty({ ownerId: owner.id, approvalStatus: "approved" });
             const [unit] = await db.select().from(propertyUnits).where(eq(propertyUnits.propertyId, property.id)).limit(1);
@@ -177,7 +224,7 @@ describe("Leases module", () => {
                     rentAmount: 800
                 });
             expect(firstRes.status).toBe(201);
-            expect(firstRes.body.data.status).toBe("pending_signatures");
+            expect(firstRes.body.data.status).toBe("active");
 
             const secondRes = await testRequest()
                 .post("/api/v1/leases")

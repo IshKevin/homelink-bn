@@ -189,7 +189,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
     let rawPasswordResetToken: string | undefined;
     let temporaryPassword: string | undefined;
     let loginCode: string | undefined;
-    const { lease, tenant } = await db.transaction(async (tx) => {
+    const { lease: createdLease, tenant } = await db.transaction(async (tx) => {
         const [freshUnit] = await tx.select().from(propertyUnits).where(eq(propertyUnits.id, unit.id)).limit(1);
         if (!freshUnit || freshUnit.status !== "available") {
             throw AppError.conflict("Unit is not available");
@@ -280,6 +280,7 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
 
         return { lease: createdLease, tenant: tenantRow };
     });
+    let lease = createdLease;
 
     await recomputePropertyStatus(property.id);
 
@@ -295,13 +296,54 @@ export async function createLease(creator: Requester, input: CreateLeaseInput) {
         });
     }
 
-    await notify({
-        userId: tenant.id,
-        type: "lease.signature_requested",
-        title: "Lease ready to sign",
-        message: `A lease for "${property.title}" is ready for your signature.`,
-        sendEmail: true
-    });
+    if (input.newTenant) {
+        // A landlord adding a brand-new tenant doesn't need that tenant's
+        // signature to execute the lease — unlike assigning an existing
+        // tenant (who's already on the platform and can be asked to sign),
+        // this tenant hasn't even logged in yet. The unit is already
+        // occupied (set above, inside the transaction); this just performs
+        // the rest of what signLease would otherwise do on the tenant's
+        // behalf: the move-in request, the lease document, and (if already
+        // due) the first invoice.
+        const now = new Date();
+        await db.insert(moveRequests).values({
+            leaseId: lease.id,
+            type: "move_in",
+            status: "pending",
+            requestedBy: tenant.id,
+            checklist: DEFAULT_MOVE_IN_CHECKLIST
+        });
+
+        const documentUrl = await generateAndStoreLeaseDocument(lease, property);
+
+        const [activated] = await db
+            .update(leases)
+            .set({ status: "active", documentUrl, updatedAt: now })
+            .where(eq(leases.id, lease.id))
+            .returning();
+        if (!activated) throw AppError.internal("Failed to activate lease");
+        lease = activated;
+
+        if (lease.startDate <= format(now, "yyyy-MM-dd")) {
+            await ensureInvoiceForLease(lease, now);
+        }
+
+        await notify({
+            userId: tenant.id,
+            type: "lease.activated",
+            title: "Lease activated",
+            message: `Your lease for "${property.title}" is now active.`,
+            sendEmail: true
+        });
+    } else {
+        await notify({
+            userId: tenant.id,
+            type: "lease.signature_requested",
+            title: "Lease ready to sign",
+            message: `A lease for "${property.title}" is ready for your signature.`,
+            sendEmail: true
+        });
+    }
 
     const tenantSummary = {
         id: tenant.id,

@@ -105,6 +105,21 @@ describe("IAM module", () => {
 
             const tenant = await inviteAndAccept(ownerToken, "tenants", "tenant-invite@example.com");
             expect(tenant.role).toBe("tenant");
+            expect(tenant.loginCode).toBeTruthy();
+
+            const loginRes = await testRequest()
+                .post("/api/v1/auth/login")
+                .send({ identifier: tenant.loginCode, password: "Password123!" });
+            expect(loginRes.status).toBe(200);
+        });
+
+        it("lets a tenant accept an invite when their email already has a tenant account", async () => {
+            const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
+            await createAuthedUser({ role: "tenant", email: "returning-tenant@example.com" });
+
+            const tenant = await inviteAndAccept(ownerToken, "tenants", "returning-tenant@example.com");
+            expect(tenant.role).toBe("tenant");
+            expect(tenant.loginCode).toBeTruthy();
         });
     });
 

@@ -1,10 +1,10 @@
 import { addDays } from "date-fns";
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { and, desc, eq, ilike, ne, or } from "drizzle-orm";
 import { db } from "../../database";
 import { invites, leases, managerAssignments, properties, suspensionRequests, users } from "../../database/schema";
 import { AppError } from "../../common/errors/AppError";
 import { generateRawToken, hashToken } from "../../common/utils/jwt.util";
-import { hashPassword } from "../../common/utils/password.util";
+import { generateLoginCode, hashPassword } from "../../common/utils/password.util";
 import { recordAction } from "../../services/audit.service";
 import { sendMail } from "../../services/email.service";
 import { inviteTemplate } from "../../services/email.templates";
@@ -222,24 +222,51 @@ export async function acceptInvite(input: AcceptInviteInput) {
         throw AppError.badRequest("Invalid or expired invite");
     }
 
-    const [existing] = await db.select().from(users).where(eq(users.email, invite.email)).limit(1);
-    if (existing) {
-        throw AppError.conflict("An account with this email already exists");
+    const isTenant = invite.role === "tenant";
+
+    // Tenant email isn't unique (see users.schema.ts) — one person can hold
+    // several tenant accounts, e.g. a unit from each of two landlords — so
+    // only non-tenant roles, which log in by email, are blocked here.
+    if (!isTenant) {
+        const [existing] = await db
+            .select()
+            .from(users)
+            .where(and(eq(users.email, invite.email), ne(users.role, "tenant")))
+            .limit(1);
+        if (existing) {
+            throw AppError.conflict("An account with this email already exists");
+        }
     }
 
     const passwordHash = await hashPassword(input.password);
-    const [user] = await db
-        .insert(users)
-        .values({
-            email: invite.email,
-            passwordHash,
-            firstName: input.firstName,
-            lastName: input.lastName,
-            phone: input.phone,
-            role: invite.role,
-            isApproved: true
-        })
-        .returning();
+    const values = {
+        email: invite.email,
+        passwordHash,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        phone: input.phone,
+        role: invite.role,
+        isApproved: true
+    };
+
+    // Tenants log in by loginCode, not email — without one an invited
+    // tenant would have no way to sign in. Same retry-on-collision approach
+    // as createLease's newTenant path.
+    let user: typeof users.$inferSelect | undefined;
+    let loginCode: string | undefined;
+    if (isTenant) {
+        for (let attempt = 0; attempt < 5 && !user; attempt++) {
+            loginCode = generateLoginCode();
+            const [existingCode] = await db.select().from(users).where(eq(users.loginCode, loginCode)).limit(1);
+            if (existingCode) continue;
+            [user] = await db
+                .insert(users)
+                .values({ ...values, loginCode })
+                .returning();
+        }
+    } else {
+        [user] = await db.insert(users).values(values).returning();
+    }
 
     if (!user) throw AppError.internal("Failed to create account");
 

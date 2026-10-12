@@ -25,12 +25,18 @@ export async function sendMail(input: SendMailInput): Promise<void> {
         return;
     }
     try {
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
             from: env.smtp.from,
             to: input.to,
             subject: input.subject,
             html: input.html
         });
+        // The SMTP handoff succeeding (no throw) only means the provider
+        // accepted the message for delivery, not that it reached the
+        // recipient — log its response so a deliverability issue downstream
+        // (e.g. an unverified sending domain) is at least visible here
+        // instead of looking identical to a real success.
+        logger.info({ to: input.to, messageId: info.messageId, response: info.response }, "Email accepted by SMTP server");
     } catch (err) {
         logger.error({ err, to: input.to }, "Failed to send email");
     }

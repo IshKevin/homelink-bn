@@ -173,7 +173,7 @@ invoicesRouter.post(
  * /invoices/{id}/record-payment:
  *   post:
  *     tags: [Payments]
- *     summary: Record a payment collected in person (owner, agent assigned to the property, house manager, or admin) — marks the invoice paid immediately
+ *     summary: Record a payment collected in person (owner, agent assigned to the property, property manager, or admin) — marks the invoice paid immediately
  *     parameters:
  *       - in: path
  *         name: id
@@ -335,7 +335,7 @@ paymentsRouter.get("/:id/proof", authorize("tenant", "owner", "house_manager", .
  * /payments/{id}/approve:
  *   patch:
  *     tags: [Payments]
- *     summary: Approve a cash or bank-transfer payment awaiting landlord approval (owner, house manager, or admin)
+ *     summary: Approve a cash or bank-transfer payment awaiting landlord approval (owner, property manager, or admin)
  *     parameters:
  *       - in: path
  *         name: id
@@ -362,7 +362,7 @@ paymentsRouter.patch("/:id/approve", authorize("owner", "house_manager", ...ADMI
  * /payments/{id}/reject:
  *   patch:
  *     tags: [Payments]
- *     summary: Reject a cash or bank-transfer payment awaiting landlord approval (owner, house manager, or admin)
+ *     summary: Reject a cash or bank-transfer payment awaiting landlord approval (owner, property manager, or admin)
  *     parameters:
  *       - in: path
  *         name: id

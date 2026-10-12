@@ -24,7 +24,7 @@ router.use(authenticate);
  * /users:
  *   get:
  *     tags: [Users]
- *     summary: Search the user directory (owner, agent, house manager, or admin) — e.g. to check whether a person already has an account before assigning them to a unit as a tenant
+ *     summary: Search the user directory (owner, agent, property manager, or admin) — e.g. to check whether a person already has an account before assigning them to a unit as a tenant
  *     parameters:
  *       - in: query
  *         name: search

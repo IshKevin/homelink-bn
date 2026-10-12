@@ -276,7 +276,7 @@ router.get("/:id", getPropertyHandler);
  * /properties/{id}:
  *   delete:
  *     tags: [Properties]
- *     summary: Permanently delete a property (owner, house manager, or admin) — only if it has no lease history
+ *     summary: Permanently delete a property (owner, property manager, or admin) — only if it has no lease history
  *     description: >
  *       Deliberately narrow: for cleaning up a genuine accidental duplicate
  *       (e.g. a double-submitted create), not for removing a property with
@@ -413,7 +413,7 @@ router.get("/:id/floors", listFloorsHandler);
  * /properties/{id}/floors/{floorId}:
  *   patch:
  *     tags: [Properties]
- *     summary: Edit a floor's name and/or scale (size/area) — owner, assigned agent, house manager, or admin
+ *     summary: Edit a floor's name and/or scale (size/area) — owner, assigned agent, property manager, or admin
  *     parameters:
  *       - in: path
  *         name: id
@@ -489,7 +489,7 @@ router.get("/:id/floors/:floorId/units", listUnitsByFloorHandler);
  * /properties/{id}/units:
  *   post:
  *     tags: [Properties]
- *     summary: Add a single unit to one of a property's floors (owner, assigned agent, house manager, or admin)
+ *     summary: Add a single unit to one of a property's floors (owner, assigned agent, property manager, or admin)
  *     parameters:
  *       - in: path
  *         name: id
@@ -755,7 +755,7 @@ router.patch(
  * /properties/{id}/units/{unitId}:
  *   delete:
  *     tags: [Properties]
- *     summary: Delete (archive) a property's unit (owner, assigned agent, house manager, or admin)
+ *     summary: Delete (archive) a property's unit (owner, assigned agent, property manager, or admin)
  *     description: Soft-delete — the unit disappears from the property's unit list and available-units search, but its row and any lease/invoice/payment history tied to it are kept, exactly like a terminated lease. Its unit number becomes free to reuse on a new unit.
  *     parameters:
  *       - in: path

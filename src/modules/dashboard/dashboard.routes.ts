@@ -88,7 +88,7 @@ router.get("/agent", authorize("agent"), getAgentDashboardHandler);
  * /dashboard/me:
  *   get:
  *     tags: [Dashboard]
- *     summary: Get the dashboard appropriate for the caller's own role (tenant, owner/house manager, agent, or admin/superadmin)
+ *     summary: Get the dashboard appropriate for the caller's own role (tenant, owner/property manager, agent, or admin/superadmin)
  *     responses:
  *       200:
  *         description: Dashboard data shaped according to the caller's role

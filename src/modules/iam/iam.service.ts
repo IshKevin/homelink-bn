@@ -54,7 +54,7 @@ async function createInvite(
     }
 
     const link = `${env.frontendUrl}/join?token=${rawToken}`;
-    const roleLabel = role === "house_manager" ? "house manager" : role === "owner" ? "landlord" : "tenant";
+    const roleLabel = role === "house_manager" ? "property manager" : role === "owner" ? "landlord" : "tenant";
     await sendMail({
         to: email,
         subject: "You've been invited to HomeLink",
@@ -74,25 +74,25 @@ async function createInvite(
 
 export async function inviteManager(inviter: Requester, email: string) {
     if (inviter.role !== "owner") {
-        throw AppError.forbidden("Only a house owner can invite a house manager");
+        throw AppError.forbidden("Only a house owner can invite a property manager");
     }
     return createInvite(inviter, inviter.id, email, "house_manager");
 }
 
 export async function inviteTenant(inviter: Requester, email: string, propertyId?: string) {
     if (inviter.role !== "owner" && inviter.role !== "house_manager") {
-        throw AppError.forbidden("Only a house owner or house manager can invite a tenant");
+        throw AppError.forbidden("Only a house owner or property manager can invite a tenant");
     }
     const ownerId = await resolveEffectiveOwnerId(inviter);
     return createInvite(inviter, ownerId, email, "tenant", propertyId);
 }
 
-// Owners/house managers can't hit GET /admin/users (admin-only) — this is
+// Owners/property managers can't hit GET /admin/users (admin-only) — this is
 // the narrow, tenant-only equivalent they need to find an existing tenant
 // account to assign directly to a unit, instead of always creating a new one.
 export async function searchTenants(requester: Requester, search: string) {
     if (requester.role !== "owner" && requester.role !== "house_manager") {
-        throw AppError.forbidden("Only a house owner or house manager can search for tenants");
+        throw AppError.forbidden("Only a house owner or property manager can search for tenants");
     }
 
     const term = `%${search}%`;
@@ -273,7 +273,7 @@ export async function acceptInvite(input: AcceptInviteInput) {
     if (invite.role === "house_manager") {
         // Always set by inviteManager — ownerId is only ever null for a
         // landlord invite (role "owner"), which can't reach this branch.
-        if (!invite.ownerId) throw AppError.internal("House manager invite is missing its owner");
+        if (!invite.ownerId) throw AppError.internal("Property manager invite is missing its owner");
         await db.insert(managerAssignments).values({
             ownerId: invite.ownerId,
             managerId: user.id,
@@ -300,7 +300,7 @@ export async function acceptInvite(input: AcceptInviteInput) {
 
 export async function createSuspensionRequest(requester: Requester, targetUserId: string, reason: string) {
     if (requester.role !== "owner" && requester.role !== "house_manager") {
-        throw AppError.forbidden("Only a house owner or house manager can request a suspension");
+        throw AppError.forbidden("Only a house owner or property manager can request a suspension");
     }
 
     const [target] = await db.select().from(users).where(eq(users.id, targetUserId)).limit(1);
@@ -331,7 +331,7 @@ export async function createSuspensionRequest(requester: Requester, targetUserId
     }
 
     if (!isRelated) {
-        throw AppError.forbidden("You can only request suspension for one of your own tenants or house managers");
+        throw AppError.forbidden("You can only request suspension for one of your own tenants or property managers");
     }
 
     const [request] = await db

@@ -81,7 +81,7 @@ describe("IAM module", () => {
             expect(dashboardAfterRevoke.status).toBe(403);
         });
 
-        it("forbids a house manager (not an owner) from inviting another manager", async () => {
+        it("forbids a property manager (not an owner) from inviting another manager", async () => {
             const { accessToken: ownerToken } = await createAuthedUser({ role: "owner" });
             const manager = await inviteAndAccept(ownerToken, "managers", "manager2@example.com");
 

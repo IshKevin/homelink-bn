@@ -67,7 +67,7 @@ router.use(authenticate);
  * /iam/managers/invite:
  *   post:
  *     tags: [IAM]
- *     summary: Invite a house manager (house owner only)
+ *     summary: Invite a property manager (house owner only)
  *     requestBody:
  *       required: true
  *       content:
@@ -108,7 +108,7 @@ router.get("/managers", authorize("owner", "house_manager"), listManagersHandler
  * /iam/managers/{id}/revoke:
  *   patch:
  *     tags: [IAM]
- *     summary: Revoke a house manager's access (house owner only, does not delete the manager's account)
+ *     summary: Revoke a property manager's access (house owner only, does not delete the manager's account)
  *     parameters:
  *       - in: path
  *         name: id
@@ -135,7 +135,7 @@ router.patch("/managers/:id/revoke", authorize("owner"), revokeManagerHandler);
  * /iam/tenants/invite:
  *   post:
  *     tags: [IAM]
- *     summary: Invite a tenant (house owner or house manager)
+ *     summary: Invite a tenant (house owner or property manager)
  *     requestBody:
  *       required: true
  *       content:
@@ -161,7 +161,7 @@ router.post("/tenants/invite", authorize("owner", "house_manager"), validate(inv
  * /iam/tenants/search:
  *   get:
  *     tags: [IAM]
- *     summary: Search existing tenant accounts by name, email, or phone (house owner or house manager)
+ *     summary: Search existing tenant accounts by name, email, or phone (house owner or property manager)
  *     parameters:
  *       - in: query
  *         name: search
@@ -236,7 +236,7 @@ router.get("/invites", authorize("owner", "house_manager", "agent"), validate(li
  * /iam/suspension-requests:
  *   post:
  *     tags: [IAM]
- *     summary: Request that an admin suspend a user (house owner or house manager)
+ *     summary: Request that an admin suspend a user (house owner or property manager)
  *     requestBody:
  *       required: true
  *       content:

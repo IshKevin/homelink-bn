@@ -574,7 +574,7 @@ router.patch(
  * /leases/{id}/documents:
  *   post:
  *     tags: [Leases]
- *     summary: Upload optional scanned/physical lease documents (tenant, owner, house manager, or admin)
+ *     summary: Upload optional scanned/physical lease documents (tenant, owner, property manager, or admin)
  *     parameters:
  *       - in: path
  *         name: id

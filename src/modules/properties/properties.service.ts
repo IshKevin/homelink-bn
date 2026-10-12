@@ -120,6 +120,22 @@ async function assertPropertyWriteAccess(property: PropertyRow, requester: Reque
 }
 
 /**
+ * Floor/unit setup (and anything that creates real, leasable inventory) is
+ * blocked until an admin approves the property — a landlord can't wait out
+ * the review by just building out floors/units in the meantime. Property-
+ * level edits (details, images, documents) stay open while pending, since
+ * fixing those is often exactly what gets a property approved.
+ */
+function assertPropertyApproved(property: PropertyRow, requester: Requester) {
+    if (isAdminRole(requester.role)) return;
+    if (property.approvalStatus !== "approved") {
+        throw AppError.forbidden(
+            "This property is pending admin approval. Floor and unit management unlocks once it's approved."
+        );
+    }
+}
+
+/**
  * A tenant may read a property/its units even when it isn't publicly
  * approved+active, as long as they have a real lease on it — the
  * approved+active gate exists for public browsing, not for someone who's
@@ -372,6 +388,7 @@ export async function updateFloor(propertyId: string, floorId: string, requester
     if (!propertyRow) throw AppError.notFound("Property not found");
 
     await assertPropertyWriteAccess(propertyRow, requester);
+    assertPropertyApproved(propertyRow, requester);
     await getFloorOrThrow(propertyId, floorId);
 
     const updates: Partial<typeof floors.$inferInsert> = { updatedAt: new Date() };
@@ -449,6 +466,7 @@ export async function createUnit(propertyId: string, requester: Requester, input
     if (!propertyRow) throw AppError.notFound("Property not found");
 
     await assertPropertyWriteAccess(propertyRow, requester);
+    assertPropertyApproved(propertyRow, requester);
     await getFloorOrThrow(propertyId, input.floorId);
     await assertNoDuplicateLabel(propertyId, input.label);
 
@@ -534,6 +552,7 @@ export async function updateUnit(propertyId: string, unitId: string, requester: 
     if (!propertyRow) throw AppError.notFound("Property not found");
 
     await assertPropertyWriteAccess(propertyRow, requester);
+    assertPropertyApproved(propertyRow, requester);
 
     const unit = await getUnitOrThrow(unitId);
     if (unit.propertyId !== propertyId) throw AppError.notFound("Unit not found");
@@ -581,6 +600,7 @@ export async function deleteUnit(propertyId: string, unitId: string, requester: 
     if (!propertyRow) throw AppError.notFound("Property not found");
 
     await assertPropertyWriteAccess(propertyRow, requester);
+    assertPropertyApproved(propertyRow, requester);
 
     const unit = await getUnitOrThrow(unitId);
     if (unit.propertyId !== propertyId) throw AppError.notFound("Unit not found");
@@ -609,6 +629,7 @@ export async function generateUnits(propertyId: string, requester: Requester, in
     const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!propertyRow) throw AppError.notFound("Property not found");
     await assertPropertyWriteAccess(propertyRow, requester);
+    assertPropertyApproved(propertyRow, requester);
     const floor = await getFloorOrThrow(propertyId, input.floorId);
 
     const bedrooms = input.bedrooms !== undefined ? String(input.bedrooms) : undefined;
@@ -792,6 +813,7 @@ export async function previewImportUnitsFromExcel(
     const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!propertyRow) throw AppError.notFound("Property not found");
     await assertPropertyWriteAccess(propertyRow, requester);
+    assertPropertyApproved(propertyRow, requester);
 
     return parseUnitsWorkbook(propertyId, fileBuffer);
 }
@@ -837,6 +859,7 @@ export async function importUnitsFromExcel(propertyId: string, requester: Reques
     const [propertyRow] = await db.select().from(properties).where(eq(properties.id, propertyId)).limit(1);
     if (!propertyRow) throw AppError.notFound("Property not found");
     await assertPropertyWriteAccess(propertyRow, requester);
+    assertPropertyApproved(propertyRow, requester);
 
     const { values, errors } = await parseUnitsWorkbook(propertyId, fileBuffer);
 

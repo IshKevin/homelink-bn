@@ -26,7 +26,7 @@ export async function getInvoiceHandler(req: Request, res: Response) {
 }
 
 export async function payInvoiceHandler(req: Request, res: Response) {
-    const payment = await paymentsService.payInvoice(req.params["id"] as string, req.user!, req.body);
+    const payment = await paymentsService.payInvoice(req.params["id"] as string, req.user!, req.body, req.file);
     return sendSuccess(res, { statusCode: 201, message: "Payment initiated", data: payment });
 }
 
@@ -79,6 +79,11 @@ export async function exportPaymentsHandler(req: Request, res: Response) {
 export async function getReceiptHandler(req: Request, res: Response) {
     const receipt = await paymentsService.getReceipt(req.params["id"] as string, req.user!);
     return sendSuccess(res, { data: receipt });
+}
+
+export async function getProofOfPaymentHandler(req: Request, res: Response) {
+    const proof = await paymentsService.getProofOfPayment(req.params["id"] as string, req.user!);
+    return sendSuccess(res, { data: proof });
 }
 
 export async function approvePaymentHandler(req: Request, res: Response) {

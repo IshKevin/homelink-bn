@@ -342,6 +342,61 @@ describe("Payments module", () => {
                 .set("Authorization", `Bearer ${otherOwnerToken}`);
             expect(approveRes.status).toBe(403);
         });
+
+        it("lets a tenant optionally attach a receipt photo to a cash payment, visible to tenant and owner via /proof", async () => {
+            const { ownerToken, tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const payRes = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .field("method", "cash")
+                .attach("receipt", Buffer.from("fake-image-bytes"), "receipt.jpg");
+
+            expect(payRes.status).toBe(201);
+            expect(payRes.body.data.proofOfPaymentUrl).toBeTruthy();
+
+            const tenantProofRes = await testRequest()
+                .get(`/api/v1/payments/${payRes.body.data.id}/proof`)
+                .set("Authorization", `Bearer ${tenantToken}`);
+            expect(tenantProofRes.status).toBe(200);
+            expect(tenantProofRes.body.data.url).toBeTruthy();
+
+            const ownerProofRes = await testRequest()
+                .get(`/api/v1/payments/${payRes.body.data.id}/proof`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(ownerProofRes.status).toBe(200);
+        });
+
+        it("leaves proofOfPaymentUrl unset for a cash payment with no receipt attached, and 404s on /proof", async () => {
+            const { ownerToken, tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const payRes = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .send({ method: "cash" });
+
+            expect(payRes.status).toBe(201);
+            expect(payRes.body.data.proofOfPaymentUrl).toBeFalsy();
+
+            const proofRes = await testRequest()
+                .get(`/api/v1/payments/${payRes.body.data.id}/proof`)
+                .set("Authorization", `Bearer ${ownerToken}`);
+            expect(proofRes.status).toBe(404);
+        });
+
+        it("ignores a receipt file attached to a mobile_money payment (no cash/bank_transfer approval to attach it to)", async () => {
+            const { tenantToken, invoice } = await setupLeaseWithInvoice({ amountDue: "1500.00" });
+
+            const payRes = await testRequest()
+                .post(`/api/v1/invoices/${invoice.id}/pay`)
+                .set("Authorization", `Bearer ${tenantToken}`)
+                .field("method", "mobile_money")
+                .field("payerPhone", "0788000000")
+                .attach("receipt", Buffer.from("fake-image-bytes"), "receipt.jpg");
+
+            expect(payRes.status).toBe(201);
+            expect(payRes.body.data.proofOfPaymentUrl).toBeFalsy();
+        });
     });
 
     describe("POST /api/v1/invoices/:id/record-payment", () => {

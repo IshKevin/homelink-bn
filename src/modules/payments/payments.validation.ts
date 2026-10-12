@@ -7,6 +7,8 @@ export const payInvoiceSchema = {
         payerPhone: z.string().max(30).optional(),
         payerAccount: z.string().max(100).optional()
     })
+    // The optional cash-payment receipt file itself travels as multipart
+    // form data (req.file via multer), not as a validated body field.
 };
 
 export const recordPaymentSchema = {

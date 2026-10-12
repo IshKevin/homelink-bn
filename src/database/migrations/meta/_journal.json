@@ -134,6 +134,13 @@
       "when": 1791532928065,
       "tag": "0018_add_unit_name",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791801112540,
+      "tag": "0019_add_payment_proof_of_payment_url",
+      "breakpoints": true
     }
   ]
 }

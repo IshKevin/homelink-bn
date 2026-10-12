@@ -263,7 +263,12 @@ export async function markPaymentFailed(paymentId: string, reason: string): Prom
     return updated ?? payment;
 }
 
-export async function payInvoice(invoiceId: string, tenant: Requester, input: PayInvoiceInput) {
+export async function payInvoice(
+    invoiceId: string,
+    tenant: Requester,
+    input: PayInvoiceInput,
+    receiptFile?: Express.Multer.File
+) {
     const { invoice, lease } = await getInvoiceWithLeaseOrThrow(invoiceId);
 
     if (tenant.id !== lease.tenantId) {
@@ -276,6 +281,19 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
 
     if (input.method === "cash" || input.method === "bank_transfer") {
         const paymentNumber = await nextDocumentNumber("ACC-PAY");
+        // The uploaded receipt is optional and only meaningful for cash —
+        // a bank_transfer already leaves its own trail on the landlord's
+        // statement, so nothing is uploaded for that method even if a file
+        // were somehow attached.
+        const proofOfPaymentUrl =
+            input.method === "cash" && receiptFile
+                ? await uploadBuffer(
+                      buildObjectKey("payment-proofs", receiptFile.originalname),
+                      receiptFile.buffer,
+                      receiptFile.mimetype
+                  )
+                : undefined;
+
         const [payment] = await db
             .insert(payments)
             .values({
@@ -287,7 +305,8 @@ export async function payInvoice(invoiceId: string, tenant: Requester, input: Pa
                 provider: input.method,
                 providerReference: `MANUAL-${crypto.randomUUID()}`,
                 status: "pending",
-                approvalStatus: "pending"
+                approvalStatus: "pending",
+                proofOfPaymentUrl
             })
             .returning();
 
@@ -614,4 +633,24 @@ export async function getReceipt(paymentId: string, requester: Requester) {
     }
 
     return { url: await getPresignedDownloadUrl(row.payment.receiptUrl) };
+}
+
+export async function getProofOfPayment(paymentId: string, requester: Requester) {
+    const [row] = await db
+        .select({ payment: payments, invoice: invoices, lease: leases })
+        .from(payments)
+        .innerJoin(invoices, eq(payments.invoiceId, invoices.id))
+        .innerJoin(leases, eq(invoices.leaseId, leases.id))
+        .where(eq(payments.id, paymentId))
+        .limit(1);
+
+    if (!row) throw AppError.notFound("Payment not found");
+
+    await assertInvoiceAccess(row.lease, requester);
+
+    if (!row.payment.proofOfPaymentUrl) {
+        throw AppError.notFound("No proof of payment was uploaded for this payment");
+    }
+
+    return { url: await getPresignedDownloadUrl(row.payment.proofOfPaymentUrl) };
 }

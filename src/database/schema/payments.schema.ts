@@ -50,6 +50,8 @@ export const payments = pgTable("payments", {
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
     receiptUrl: text("receipt_url"),
+    /** Tenant-uploaded proof for a cash payment (e.g. a photo of a handwritten receipt) — optional, distinct from receiptUrl (HomeLink's own generated PDF, set once the payment is approved). */
+    proofOfPaymentUrl: text("proof_of_payment_url"),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });

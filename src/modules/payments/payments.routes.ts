@@ -1,4 +1,5 @@
 import { Router } from "express";
+import multer from "multer";
 import { authenticate } from "../../common/middlewares/auth.middleware";
 import { authorize } from "../../common/middlewares/rbac.middleware";
 import { validate } from "../../common/middlewares/validate.middleware";
@@ -14,6 +15,7 @@ import {
     approvePaymentHandler,
     exportPaymentsHandler,
     getInvoiceHandler,
+    getProofOfPaymentHandler,
     getReceiptHandler,
     listInvoicesHandler,
     listPaymentsHandler,
@@ -28,6 +30,7 @@ import {
 // see the comment in routes/index.ts for the incident this avoids.
 const invoicesRouter = Router();
 const paymentsRouter = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 invoicesRouter.use(authenticate);
 paymentsRouter.use(authenticate);
@@ -123,6 +126,13 @@ invoicesRouter.get("/:id", authorize("tenant", "owner", "house_manager", ...ADMI
  *       content:
  *         application/json:
  *           schema: { $ref: '#/components/schemas/PayInvoiceInput' }
+ *         multipart/form-data:
+ *           schema:
+ *             allOf:
+ *               - $ref: '#/components/schemas/PayInvoiceInput'
+ *               - type: object
+ *                 properties:
+ *                   receipt: { type: string, format: binary, description: "Optional photo/scan of the cash receipt (method=cash only)" }
  *     responses:
  *       201:
  *         description: Payment initiated (may succeed or fail depending on the provider result)
@@ -143,7 +153,13 @@ invoicesRouter.get("/:id", authorize("tenant", "owner", "house_manager", ...ADMI
  *             schema:
  *               $ref: '#/components/schemas/ApiError'
  */
-invoicesRouter.post("/:id/pay", authorize("tenant"), validate(payInvoiceSchema), payInvoiceHandler);
+invoicesRouter.post(
+    "/:id/pay",
+    authorize("tenant"),
+    upload.single("receipt"),
+    validate(payInvoiceSchema),
+    payInvoiceHandler
+);
 
 /**
  * @openapi
@@ -286,6 +302,33 @@ paymentsRouter.get("/export", authorize("owner", "house_manager", ...ADMIN_ROLES
  *               $ref: '#/components/schemas/ApiError'
  */
 paymentsRouter.get("/:id/receipt", authorize("tenant", "owner", "house_manager", ...ADMIN_ROLES), getReceiptHandler);
+
+/**
+ * @openapi
+ * /payments/{id}/proof:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Get a presigned URL for a tenant's uploaded cash-payment proof, if one was attached
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Presigned proof-of-payment URL
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       404:
+ *         description: No proof of payment was uploaded for this payment
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ */
+paymentsRouter.get("/:id/proof", authorize("tenant", "owner", "house_manager", ...ADMIN_ROLES), getProofOfPaymentHandler);
 
 /**
  * @openapi

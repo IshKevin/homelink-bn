@@ -28,21 +28,26 @@ Same workload, two architectures. Start on the left; move right once real tenant
 
 ### Tier A — Two-box bootstrap, Graviton (start here)
 
-One `t4g.medium` box running this repo's `docker-compose.yml` (Postgres, Redis, API, worker) via `docker compose up -d`, plus a separate `t4g.small` box for the SSR frontend so it can restart/scale independently of the database box.
+One `t4g.small` box running this repo's `docker-compose.yml` (Postgres, Redis, API, worker) via `docker compose up -d`, plus a separate `t4g.micro` box for the SSR frontend so it can restart/scale independently of the database box, plus a `t4g.small` Jenkins box (CI + Prometheus/Grafana). Every box gets a 2 GB swap file at boot (`infra/scripts/add-swap.sh`) so a memory spike — a Chromium PDF render, a Docker build — slows the box down rather than OOM-killing Postgres or Jenkins. Production leaves `minio`/`mailpit` off (`infra/docker-compose.prod.yml` puts them behind an unused profile), since it uses real S3 and SMTP.
+
+Sized for low traffic. Scale **vertically** first: change `app_instance_type` (→ `t4g.medium` → `t4g.large`) and `terraform apply` — a stop/start of a few minutes, with the disk, data and Elastic IP kept.
+
+Prices are eu-west-1 on-demand.
 
 | Resource | Spec | Est. $/mo |
 |---|---|---|
-| EC2 — app box | t4g.medium, 2 vCPU / 4 GB, arm64 — API + worker + Postgres + Redis (4 GB gives Chromium room alongside the DB) | $24.31 |
-| EC2 — frontend box | t4g.small, 2 vCPU / 2 GB, arm64 — Next.js SSR | $12.12 |
-| EBS gp3 | 30 GB (app/DB) + 10 GB (frontend) | $3.71 |
+| EC2 — app box | t4g.small, 2 vCPU / 2 GB + 2 GB swap, arm64 — API + worker + Postgres + Redis | $13.43 |
+| EC2 — frontend box | t4g.micro, 2 vCPU / 1 GB + 2 GB swap, arm64 — Next.js SSR | $6.72 |
+| EC2 — Jenkins box | t4g.small, 2 vCPU / 2 GB + 2 GB swap, arm64 — Jenkins (512 MB heap cap) + monitoring | $13.43 |
+| Public IPv4 | 3 addresses × $3.65 | $10.95 |
+| EBS gp3 | 30 GB (app/DB) + 10 GB (frontend) + 30 GB (Jenkins) | $6.16 |
 | S3 | ~20 GB storage + requests | $1.50 |
 | Data transfer out | ~15 GB/mo (reduced by Cloudflare caching) | $1.10 |
-| Amazon SES | Transactional email, low volume | $0.50 |
+| Email (SMTP provider) | Transactional email, low volume | $0.50 |
 | CloudWatch | 7-day log retention, free status-check alarms only | $1.00 |
-| Snapshots | Nightly EBS snapshot, both boxes | $1.20 |
+| Snapshots | Nightly EBS snapshot, all boxes, 7 kept | $2.00 |
 | DNS | Cloudflare free plan | $0.00 |
-| Domain | .com, amortized ($13/yr) | $1.10 |
-| **Total** | | **~$47/mo** |
+| **Total** | | **~$57/mo** (~$47 with a 1-year no-upfront EC2 Instance Savings Plan on t4g) |
 
 ### Tier B — Managed & split out (grow into this)
 
@@ -181,7 +186,7 @@ EventBridge → SQS rather than → Lambda is deliberate: the app already runs a
 ## 10. Provisioning checklist (Tier A)
 
 1. Register domain; point nameservers at Cloudflare; add DNS records once the app box has a static IP (Elastic IP).
-2. Launch `t4g.medium` (app) and `t4g.small` (frontend) EC2 instances, Amazon Linux or Ubuntu ARM AMI, Docker + Docker Compose installed.
+2. Launch `t4g.small` (app) and `t4g.micro` (frontend) EC2 instances, Amazon Linux or Ubuntu ARM AMI, Docker + Docker Compose installed.
 3. Attach security groups: app box exposes 443 only (Chromium/API/worker behind it); frontend box exposes 443 only; DB/Redis stay bound to localhost per `docker-compose.yml`.
 4. Store `JWT_SECRET`, `JWT_REFRESH_SECRET`, `DATABASE_URL`, S3 and SMTP credentials in SSM Parameter Store; populate `.env` on the box at deploy time (mirrors `.env.example` in repo root).
 5. `git clone` + `docker compose up -d` on the app box (runs `migrate` → `seed-admin`/`seed-demo` → `api`/`worker` per the compose file's `depends_on` chain); deploy the frontend build to its own box separately.

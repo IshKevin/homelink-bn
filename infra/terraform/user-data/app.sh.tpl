@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# --- Swap (see infra/scripts/add-swap.sh) ----------------------------------
+${swap_script}
+
 # --- Docker + Compose plugin (arm64, Amazon Linux 2023) ---------------------
 dnf update -y
 dnf install -y docker git

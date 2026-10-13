@@ -17,7 +17,7 @@ variable "aws_region" {
 }
 
 variable "domain_name" {
-  description = "Registered domain (e.g. \"homelink.com\") used for SES sending identity and, when enable_cloudflare_dns is true, DNS records — see docs/INFRASTRUCTURE.md §5/§8. Optional: leave unset (null) to provision everything domain-independent (all three boxes, S3, GHCR wiring, Jenkins) now and add SES + DNS later — set it and re-run `terraform apply` once you've registered a domain, nothing else needs to change. While unset, SES and all Cloudflare DNS records are skipped, and app/frontend URLs fall back to the boxes' Elastic IPs."
+  description = "Registered domain (e.g. \"homelink.com\") used for the email sender address and, when enable_cloudflare_dns is true, DNS records — see docs/INFRASTRUCTURE.md §5/§8. Optional: leave unset (null) to provision everything domain-independent (all three boxes, S3, GHCR wiring, Jenkins) now and add DNS later — set it and re-run `terraform apply` once you've registered a domain, nothing else needs to change. While unset, all Cloudflare DNS records are skipped, and app/frontend URLs fall back to the boxes' Elastic IPs."
   type        = string
   default     = null
 }
@@ -27,15 +27,15 @@ variable "domain_name" {
 # ---------------------------------------------------------------------------
 
 variable "app_instance_type" {
-  description = "Instance type for the app box (API + worker + Postgres + Redis via docker compose)."
+  description = "Instance type for the app box (API + worker + Postgres + Redis via docker compose). t4g.small (2 GB) relies on the swap file user-data creates for Chromium PDF-render spikes; scale up vertically (t4g.medium → t4g.large) by changing this and re-applying — a stop/start, disk and EIP are kept."
   type        = string
-  default     = "t4g.medium"
+  default     = "t4g.small"
 }
 
 variable "frontend_instance_type" {
-  description = "Instance type for the frontend (SSR) box."
+  description = "Instance type for the frontend (SSR) box. A standalone Next.js server fits in t4g.micro's 1 GB (plus swap)."
   type        = string
-  default     = "t4g.small"
+  default     = "t4g.micro"
 }
 
 variable "app_root_volume_gb" {
@@ -151,33 +151,29 @@ variable "mtn_momo_disbursement_api_key" {
   sensitive   = true
 }
 
-variable "sender_email" {
-  description = "Stopgap SES sender identity for before domain_name is registered: an individually-owned mailbox you've verified with `aws sesv2 create-email-identity` (see docs/INFRASTRUCTURE.md). Ignored once domain_name is set. Sending sandbox rules still apply (recipients must also be verified, or production access requested), and mail from a real personal mailbox routed through SES rather than that provider's own servers commonly fails DMARC/lands in spam — treat this as temporary."
+variable "smtp_host" {
+  description = "SMTP relay the app and the monitoring alerts send through."
   type        = string
-  default     = null
+  default     = "smtp.resend.com"
 }
 
-# The app only ever talks generic SMTP (src/services/email.service.ts uses
-# nodemailer against smtp_host/port/user/pass) — it has no AWS SES SDK
-# dependency. Setting all three overrides points every send at a different
-# transactional provider (Resend, Postmark, Mailgun, ...) instead of SES,
-# with no application code change. Leave all null to keep using SES.
-variable "smtp_host_override" {
-  description = "SMTP host to use instead of SES's email-smtp.<region>.amazonaws.com, e.g. smtp.resend.com."
-  type        = string
-  default     = null
-}
-
-variable "smtp_port_override" {
-  description = "SMTP port to use instead of SES's 587, if the alternate provider needs a different one."
+variable "smtp_port" {
+  description = "SMTP port. 587 (STARTTLS) — email.service.ts connects with secure: false, which doesn't work with implicit-TLS 465."
   type        = number
-  default     = null
+  default     = 587
 }
 
-variable "smtp_user_override" {
-  description = "SMTP username to use instead of the generated SES IAM SMTP user, e.g. \"resend\" for Resend."
+variable "smtp_user" {
+  description = "SMTP username — always \"resend\" for Resend."
+  type        = string
+  default     = "resend"
+}
+
+variable "smtp_password" {
+  description = "SMTP password — for Resend, the API key (re_...). Optional: only seeds the smtp_pass SSM parameter on first creation (it ignores later changes), and is baked into the Jenkins box's alerting config on a fresh build. Rotate it with `aws ssm put-parameter --overwrite`. If set, use terraform.tfvars (git-ignored) or TF_VAR_smtp_password, never a committed file."
   type        = string
   default     = null
+  sensitive   = true
 }
 
 # ---------------------------------------------------------------------------
@@ -197,11 +193,11 @@ variable "backup_retention_count" {
 }
 
 # ---------------------------------------------------------------------------
-# DNS / SES (Cloudflare, per docs/INFRASTRUCTURE.md §5)
+# DNS (Cloudflare, per docs/INFRASTRUCTURE.md §5)
 # ---------------------------------------------------------------------------
 
 variable "enable_cloudflare_dns" {
-  description = "Whether to manage DNS records (apex/api/www + SES verification) in Cloudflare. Requires cloudflare_api_token and cloudflare_zone_id. Set false to manage DNS manually and just consume the *_public_ip outputs."
+  description = "Whether to manage DNS records (apex/api/www) in Cloudflare. Requires cloudflare_api_token and cloudflare_zone_id. Set false to manage DNS manually and just consume the *_public_ip outputs."
   type        = bool
   default     = true
 }
@@ -220,7 +216,7 @@ variable "cloudflare_zone_id" {
 }
 
 variable "cloudflare_proxied" {
-  description = "Whether app/frontend DNS records are proxied through Cloudflare's edge (orange-cloud: free TLS + caching). SES verification records are never proxied regardless of this setting."
+  description = "Whether app/frontend DNS records are proxied through Cloudflare's edge (orange-cloud: free TLS + caching)."
   type        = bool
   default     = true
 }
@@ -270,9 +266,9 @@ variable "github_frontend_repo" {
 }
 
 variable "jenkins_instance_type" {
-  description = "Instance type for the Jenkins box (runs the Jenkins controller + builds Docker images directly on the host, no DinD)."
+  description = "Instance type for the Jenkins box (runs the Jenkins controller + builds Docker images directly on the host, no DinD, plus the monitoring stack). t4g.small works with Jenkins' heap capped and the swap file user-data creates; builds are slower than on t4g.medium."
   type        = string
-  default     = "t4g.medium"
+  default     = "t4g.small"
 }
 
 variable "jenkins_root_volume_gb" {

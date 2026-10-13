@@ -1,6 +1,6 @@
 # Infra
 
-Terraform for [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md)'s **Tier A** ("two-box bootstrap") architecture, plus a third box for CI/CD: one Graviton EC2 box running this repo's `docker-compose.yml` (Postgres, Redis, API, worker) plus a self-signed-TLS Caddy proxy, a separate box for the frontend, a Jenkins box, an S3 bucket, SES sending identity, Cloudflare DNS, nightly EBS snapshots, and free-tier CloudWatch status-check alarms. No NAT Gateway, no managed DB/Redis — see the doc for why and for the trigger conditions to move to Tier B.
+Terraform for [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md)'s **Tier A** ("two-box bootstrap") architecture, plus a third box for CI/CD: one Graviton EC2 box running this repo's `docker-compose.yml` (Postgres, Redis, API, worker) plus a self-signed-TLS Caddy proxy, a separate box for the frontend, a Jenkins box, an S3 bucket, Cloudflare DNS, nightly EBS snapshots, and free-tier CloudWatch status-check alarms. No NAT Gateway, no managed DB/Redis — see the doc for why and for the trigger conditions to move to Tier B.
 
 This repo (`homelink-bn`) is the **backend only**. The frontend box is provisioned, but its compose file/Caddyfile under [frontend/](./frontend/) are `.example` templates — there's no frontend Dockerfile in this repo to reference directly.
 
@@ -12,32 +12,41 @@ infra/
   docker-compose.prod.yml        # app-box overlay: parameterizes POSTGRES_PASSWORD, adds Caddy
   Caddyfile                      # app-box reverse proxy (TLS termination -> api:3000)
   frontend/*.example             # starting point for the frontend box/repo once it exists
-  scripts/ses-smtp-password.sh   # converts the SES IAM secret into an SMTP password
+  scripts/add-swap.sh            # 2 GB swap file, inlined into every box's user-data
 Jenkinsfile                      # backend build+deploy pipeline (repo root, so Jenkins finds it automatically)
 ```
 
 ## Provisioning
 
+State is remote, in S3 — everyone runs against the same copy:
+
+| | |
+|---|---|
+| Bucket | `homelink-production-tfstate-741368363892` (eu-west-1) — versioned, encrypted, public access blocked |
+| Key | `homelink/production/terraform.tfstate` |
+| Locking | S3 native lockfile (`use_lockfile`, Terraform ≥ 1.10) — no DynamoDB table |
+
+The bucket was created by hand, not by this config (a backend can't create its own bucket). If state is ever damaged, restore a previous object version from the bucket.
+
+Production's non-secret values are committed in `production.tfvars`; secrets live only in SSM and their resources ignore value changes, so no secret is needed to plan or apply:
+
 ```bash
 cd infra/terraform
 terraform init
-cp terraform.tfvars.example terraform.tfvars   # fill in domain_name, cloudflare_zone_id, alert_email
-export TF_VAR_cloudflare_api_token="..."       # keep out of tfvars/git
-terraform apply
+terraform plan  -var-file=production.tfvars
+terraform apply -var-file=production.tfvars
+```
+
+To change a secret (Resend key, MTN keys, GHCR token, ...), overwrite it in SSM, then re-run `render-env.sh` on the box and restart its containers:
+
+```bash
+aws ssm put-parameter --name /homelink/production/app/smtp_pass --type SecureString --overwrite --value "re_..."
 ```
 
 ### After `apply`
 
-1. **SES SMTP password** — Terraform creates the SES SMTP IAM user and an `smtp_pass` SSM placeholder, but an IAM secret access key is not itself a valid SMTP password; convert it once:
-   ```bash
-   terraform output -raw ses_smtp_secret_access_key \
-     | ../scripts/ses-smtp-password.sh eu-west-1 \
-     | xargs -I{} aws ssm put-parameter --region eu-west-1 \
-         --name "$(terraform output -raw ssm_parameter_prefix)/app/smtp_pass" \
-         --type SecureString --overwrite --value {}
-   ```
-2. **SES production access** — new AWS accounts start in the SES sandbox (mail only to verified addresses). Request production access via AWS Support; Terraform/the SES API can't do this step.
-3. **NCSA Data Controller registration** — required before handling real tenant data (docs/INFRASTRUCTURE.md §8). Not an infra step, but don't skip it.
+1. **Resend sending domain** — email goes out through Resend's SMTP relay (`smtp.resend.com:587`, user `resend`, password = the API key in `smtp_password`). Verify `domain_name` in that Resend account (dashboard → Domains) and add the DNS records it shows, or mail is rejected.
+2. **NCSA Data Controller registration** — required before handling real tenant data (docs/INFRASTRUCTURE.md §8). Not an infra step, but don't skip it.
 
 ### Deploying the app box
 
@@ -94,5 +103,5 @@ Same SSM Session Manager pattern (`frontend_instance_id`), `render-env.sh` write
 
 - **No automatic `git clone`/`docker compose up` in user-data.** Terraform provisions infrastructure; deploying app code is a separate (CD) concern, matching docs/INFRASTRUCTURE.md §10's checklist where "launch the box" and "clone + compose up" are distinct steps.
 - **TLS is self-signed at the origin**, terminated properly at Cloudflare's edge. Set Cloudflare's SSL/TLS mode to **Full** (not "Full (strict)", which requires a CA-signed origin cert) — see docs/INFRASTRUCTURE.md §4.
-- **`minio`/`mailpit` are left running** on the app box even though production points `S3_ENDPOINT`/`SMTP_HOST` at real S3/SES instead — removing them cleanly via a compose overlay is fragile (Compose's profile+`depends_on` interaction) for a few tens of MB of idle RAM. Not worth the complexity at this scale.
+- **`minio`/`mailpit` don't run in production** — `docker-compose.prod.yml` puts them behind an unused `local-only` profile and replaces (`!override`) the `api`/`worker` `depends_on` lists that reference minio, since production uses real S3 and Resend.
 - **`.rw` domain / AOS Kigali fallback** (docs/INFRASTRUCTURE.md §8) isn't provisioned here — reach for it only if one of the three documented triggers actually materializes.

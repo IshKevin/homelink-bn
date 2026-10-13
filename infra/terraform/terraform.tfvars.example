@@ -2,7 +2,7 @@
 
 # Optional — leave unset (comment out) if you don't have a domain yet.
 # Everything domain-independent (all three boxes, S3, GHCR wiring, Jenkins)
-# still provisions fine; SES and all Cloudflare DNS records are skipped
+# still provisions fine; all Cloudflare DNS records are skipped
 # until this is set. Add it later and re-run `terraform apply` — nothing
 # else needs to change.
 # domain_name = "homelink.example.com"
@@ -41,3 +41,7 @@ github_backend_repo = "IshKevin/homelink-bn" # only used to compute the GHCR ima
 # Jenkins credential (ID "ghcr-token"), not a Terraform variable.
 # ghcr_username = "IshKevin"
 # ghcr_token    = ""   # GitHub PAT with read:packages
+
+# Required — Resend API key, used as the SMTP password for app email and
+# monitoring alerts. Or leave it out of this file and export TF_VAR_smtp_password.
+# smtp_password = "re_..."

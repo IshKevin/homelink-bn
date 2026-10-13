@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# --- Swap (see infra/scripts/add-swap.sh) ----------------------------------
+${swap_script}
+
 # --- Docker (arm64, Amazon Linux 2023) --------------------------------
 dnf update -y
 dnf install -y docker git
@@ -14,6 +17,16 @@ dnf install -y fontconfig java-21-amazon-corretto-headless jenkins
 # Jenkins builds images directly on the host (no Docker-in-Docker) — the
 # jenkins user just needs docker group membership.
 usermod -aG docker jenkins
+
+# Cap the controller's heap so it leaves room for Docker builds and the
+# monitoring stack on a 2 GB t4g.small (the JVM otherwise sizes itself to
+# 1/4 of RAM and grows from there).
+mkdir -p /etc/systemd/system/jenkins.service.d
+cat > /etc/systemd/system/jenkins.service.d/memory.conf <<'UNIT'
+[Service]
+Environment="JAVA_OPTS=-Djava.awt.headless=true -Xms256m -Xmx512m"
+UNIT
+systemctl daemon-reload
 systemctl enable --now jenkins
 
 # aws-cli v2 — the Jenkins pipeline calls `aws ssm send-command` using this
@@ -262,13 +275,13 @@ groups:
           summary: "Container {{ $labels.name }} on {{ $labels.node }} has restarted more than twice in 15m"
 EOF
 
-# --- Alertmanager: routes firing alerts to email via SES SMTP -----------
+# --- Alertmanager: routes firing alerts to email via the SMTP relay (Resend) -----------
 cat > /opt/monitoring/alertmanager/alertmanager.yml <<'EOF'
 global:
-  smtp_smarthost: 'email-smtp.${aws_region}.amazonaws.com:587'
+  smtp_smarthost: '${smtp_host}:${smtp_port}'
   smtp_from: '${alert_from_address}'
-  smtp_auth_username: '${ses_smtp_username}'
-  smtp_auth_password: '${ses_smtp_password}'
+  smtp_auth_username: '${smtp_user}'
+  smtp_auth_password: '${smtp_password}'
   smtp_require_tls: true
 
 route:
@@ -431,7 +444,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=15d'
+      - '--storage.tsdb.retention.time=7d'
     depends_on:
       - blackbox-exporter
       - alertmanager
@@ -456,9 +469,9 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: "${grafana_admin_password}"
       GF_SERVER_ROOT_URL: "https://${grafana_public_hostname}"
       GF_SMTP_ENABLED: "true"
-      GF_SMTP_HOST: "email-smtp.${aws_region}.amazonaws.com:587"
-      GF_SMTP_USER: "${ses_smtp_username}"
-      GF_SMTP_PASSWORD: "${ses_smtp_password}"
+      GF_SMTP_HOST: "${smtp_host}:${smtp_port}"
+      GF_SMTP_USER: "${smtp_user}"
+      GF_SMTP_PASSWORD: "${smtp_password}"
       GF_SMTP_FROM_ADDRESS: "${alert_from_address}"
     volumes:
       - /opt/monitoring/grafana-provisioning:/etc/grafana/provisioning

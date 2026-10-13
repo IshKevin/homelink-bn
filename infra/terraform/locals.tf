@@ -11,7 +11,7 @@ locals {
   # ("Secrets via SSM Parameter Store, not Secrets Manager").
   ssm_prefix = "/${var.project}/${var.environment}"
 
-  # Gates SES + all Cloudflare DNS records — see domain_name's description.
+  # Gates all Cloudflare DNS records — see domain_name's description.
   have_domain = var.domain_name != null
 
   # Public hostname each box's Caddy gets a real Let's Encrypt cert for.
@@ -23,4 +23,8 @@ locals {
   # to the real subdomain automatically.
   app_public_hostname      = local.have_domain ? "${var.api_subdomain}.${var.domain_name}" : "${replace(aws_eip.app.public_ip, ".", "-")}.nip.io"
   frontend_public_hostname = local.have_domain ? var.domain_name : "${replace(aws_eip.frontend.public_ip, ".", "-")}.nip.io"
+
+  # Resend only sends from a domain verified in the account; without one,
+  # its shared onboarding@resend.dev sender (test mail to the account owner only).
+  smtp_from_address = local.have_domain ? "no-reply@${var.domain_name}" : "onboarding@resend.dev"
 }

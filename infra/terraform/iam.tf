@@ -161,30 +161,3 @@ resource "aws_iam_instance_profile" "jenkins" {
   name = "${local.name_prefix}-jenkins"
   role = aws_iam_role.jenkins.name
 }
-
-# ---------------------------------------------------------------------------
-# SES SMTP sending user — the app talks to SES over SMTP (SMTP_HOST/PORT/
-# USER/PASS in src/config/env.ts), not the SES API, so it needs long-lived
-# SMTP credentials rather than the instance role.
-# ---------------------------------------------------------------------------
-
-resource "aws_iam_user" "ses_smtp" {
-  name = "${local.name_prefix}-ses-smtp"
-}
-
-data "aws_iam_policy_document" "ses_smtp" {
-  statement {
-    actions   = ["ses:SendRawEmail"]
-    resources = ["*"]
-  }
-}
-
-resource "aws_iam_user_policy" "ses_smtp" {
-  name   = "${local.name_prefix}-ses-smtp"
-  user   = aws_iam_user.ses_smtp.name
-  policy = data.aws_iam_policy_document.ses_smtp.json
-}
-
-resource "aws_iam_access_key" "ses_smtp" {
-  user = aws_iam_user.ses_smtp.name
-}

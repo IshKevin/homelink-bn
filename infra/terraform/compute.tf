@@ -25,11 +25,19 @@ resource "aws_instance" "app" {
   }
 
   user_data = templatefile("${path.module}/user-data/app.sh.tpl", {
-    ssm_prefix = local.ssm_prefix
-    aws_region = var.aws_region
+    swap_script = file("${path.module}/../scripts/add-swap.sh")
+    ssm_prefix  = local.ssm_prefix
+    aws_region  = var.aws_region
   })
 
   tags = { Name = "${local.name_prefix}-app", Backup = "true" }
+
+  # user_data only runs on an instance's first boot — a later edit would just
+  # stop/start the box without re-running it (apply such changes by hand,
+  # e.g. via SSM). Replacing the AMI is a deliberate rebuild, not drift.
+  lifecycle {
+    ignore_changes = [ami, user_data]
+  }
 }
 
 resource "aws_eip" "app" {
@@ -58,11 +66,19 @@ resource "aws_instance" "frontend" {
   }
 
   user_data = templatefile("${path.module}/user-data/frontend.sh.tpl", {
-    ssm_prefix = local.ssm_prefix
-    aws_region = var.aws_region
+    swap_script = file("${path.module}/../scripts/add-swap.sh")
+    ssm_prefix  = local.ssm_prefix
+    aws_region  = var.aws_region
   })
 
   tags = { Name = "${local.name_prefix}-frontend", Backup = "true" }
+
+  # user_data only runs on an instance's first boot — a later edit would just
+  # stop/start the box without re-running it (apply such changes by hand,
+  # e.g. via SSM). Replacing the AMI is a deliberate rebuild, not drift.
+  lifecycle {
+    ignore_changes = [ami, user_data]
+  }
 }
 
 resource "aws_eip" "frontend" {
@@ -117,6 +133,7 @@ resource "aws_instance" "jenkins" {
   }
 
   user_data = templatefile("${path.module}/user-data/jenkins.sh.tpl", {
+    swap_script             = file("${path.module}/../scripts/add-swap.sh")
     aws_region              = var.aws_region
     app_instance_id         = aws_instance.app.id
     frontend_instance_id    = aws_instance.frontend.id
@@ -130,12 +147,21 @@ resource "aws_instance" "jenkins" {
     app_public_hostname      = local.app_public_hostname
     frontend_public_hostname = local.frontend_public_hostname
     alert_email              = var.alert_email
-    ses_smtp_username        = aws_iam_access_key.ses_smtp.id
-    ses_smtp_password        = data.external.ses_smtp_password.result.password
-    alert_from_address       = local.have_domain ? "no-reply@${var.domain_name}" : coalesce(var.sender_email, "no-reply@example.com")
+    smtp_host                = var.smtp_host
+    smtp_port                = var.smtp_port
+    smtp_user                = var.smtp_user
+    smtp_password            = var.smtp_password != null ? var.smtp_password : ""
+    alert_from_address       = local.smtp_from_address
   })
 
   tags = { Name = "${local.name_prefix}-jenkins", Backup = "true" }
+
+  # user_data only runs on an instance's first boot — a later edit would just
+  # stop/start the box without re-running it (apply such changes by hand,
+  # e.g. via SSM). Replacing the AMI is a deliberate rebuild, not drift.
+  lifecycle {
+    ignore_changes = [ami, user_data]
+  }
 }
 
 resource "aws_eip_association" "jenkins" {
@@ -161,18 +187,6 @@ resource "random_password" "jenkins_github_webhook_secret" {
 resource "random_password" "grafana_admin_password" {
   length  = 24
   special = false
-}
-
-# Converts aws_iam_access_key.ses_smtp's raw secret into an actual SMTP
-# password (see infra/scripts/ses-smtp-password-external.sh) at `terraform
-# apply` time, so the Jenkins box's user_data only ever needs the derived
-# password — never the master IAM secret — for Alertmanager's SMTP alerts.
-data "external" "ses_smtp_password" {
-  program = ["bash", "${path.module}/../scripts/ses-smtp-password-external.sh"]
-  query = {
-    secret = aws_iam_access_key.ses_smtp.secret
-    region = var.aws_region
-  }
 }
 
 locals {

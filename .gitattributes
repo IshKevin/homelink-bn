@@ -1,0 +1,5 @@
+# Shell scripts and user-data templates run on Linux boxes (user-data is
+# rendered from these on whatever machine runs terraform) — CRLF line endings
+# from a Windows checkout would break them.
+*.sh  text eol=lf
+*.tpl text eol=lf

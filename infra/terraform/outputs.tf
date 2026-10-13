@@ -27,27 +27,6 @@ output "ssm_parameter_prefix" {
   value       = local.ssm_prefix
 }
 
-output "ses_domain_identity_verification_token" {
-  description = "Null while domain_name is unset. Otherwise only needed if enable_cloudflare_dns = false — create the _amazonses TXT record manually."
-  value       = local.have_domain ? aws_ses_domain_identity.app[0].verification_token : null
-}
-
-output "ses_dkim_tokens" {
-  description = "Empty while domain_name is unset. Otherwise only needed if enable_cloudflare_dns = false — create the 3 CNAME <token>._domainkey records manually."
-  value       = local.have_domain ? aws_ses_domain_dkim.app[0].dkim_tokens : []
-}
-
-output "ses_smtp_username" {
-  description = "IAM access key ID — also the SMTP username."
-  value       = aws_iam_access_key.ses_smtp.id
-}
-
-output "ses_smtp_secret_access_key" {
-  description = "Feed this into infra/scripts/ses-smtp-password.sh to derive the actual SMTP password, then store it at <ssm_parameter_prefix>/app/smtp_pass."
-  value       = aws_iam_access_key.ses_smtp.secret
-  sensitive   = true
-}
-
 output "ghcr_backend_repository" {
   description = "Where CI pushes the backend image: ghcr.io/<ghcr_username>/<repo>."
   # Recomputed rather than read from aws_ssm_parameter.app_ghcr_repository.value —
@@ -104,11 +83,8 @@ output "grafana_admin_password" {
 
 output "next_steps" {
   value = <<-EOT
-    ${local.have_domain ? "" : "0. domain_name is unset — SES and all Cloudflare DNS records were skipped. Steps 1-2 below don't apply yet; set domain_name and re-`apply` once you've registered one.\n    "}1. Convert the SES SMTP secret into an SMTP password and store it:
-       terraform output -raw ses_smtp_secret_access_key | infra/scripts/ses-smtp-password.sh ${var.aws_region} \
-         | xargs -I{} aws ssm put-parameter --region ${var.aws_region} \
-             --name "${local.ssm_prefix}/app/smtp_pass" --type SecureString --overwrite --value {}
-    2. Request SES production access (AWS Support console) — new accounts start in the sandbox.
+    ${local.have_domain ? "" : "0. domain_name is unset — all Cloudflare DNS records were skipped; set domain_name and re-`apply` once you've registered one.\n    "}1. Verify the sending domain in the Resend account whose API key is smtp_password (Resend dashboard → Domains).
+    2. Email is sent via ${var.smtp_host}:${var.smtp_port} — rotate the key by changing smtp_password and re-applying.
     3. If the GHCR packages are private, set ghcr_token (a GitHub PAT with read:packages) before/after
        apply so the app/frontend boxes can pull; leave it unset only if the packages are public.
     4. SSH-free box access: aws ssm start-session --target <app_instance_id | frontend_instance_id | jenkins_instance_id>

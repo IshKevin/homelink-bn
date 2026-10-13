@@ -33,9 +33,35 @@ services:
 
   api:
     image: ${GHCR_REPOSITORY:?set by render-env.sh}:${IMAGE_TAG:?export before deploying}
+    # Base file's list minus minio (disabled below) — !override replaces it
+    # instead of merging, which would keep the minio dependency.
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+      seed-admin:
+        condition: service_completed_successfully
+      seed-demo:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
 
   worker:
     image: ${GHCR_REPOSITORY:?set by render-env.sh}:${IMAGE_TAG:?export before deploying}
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  # Local-dev stand-ins: production uses real S3 and a real SMTP provider
+  # (SSM's s3_endpoint/smtp_host), so these would only burn RAM on the app
+  # box. A profile nobody enables keeps `docker compose up -d` from starting
+  # them; `--profile local-only` still brings them up if ever needed.
+  minio:
+    profiles: ["local-only"]
+
+  mailpit:
+    profiles: ["local-only"]
 
   caddy:
     image: caddy:2-alpine

@@ -134,6 +134,11 @@ resource "aws_ssm_parameter" "admin_password" {
   name  = "${local.ssm_prefix}/app/admin_password"
   type  = "SecureString"
   value = var.admin_password
+
+  # Only seeds the first admin; rotating it is done in-app, not here.
+  lifecycle {
+    ignore_changes = [value]
+  }
 }
 
 resource "aws_ssm_parameter" "redis_url" {
@@ -198,58 +203,52 @@ resource "aws_ssm_parameter" "s3_access_key" {
 resource "aws_ssm_parameter" "s3_secret_key" {
   name  = "${local.ssm_prefix}/app/s3_secret_key"
   type  = "SecureString"
-  value = aws_iam_access_key.s3_app.secret
+  value = coalesce(aws_iam_access_key.s3_app.secret, "set-out-of-band")
+
+  # AWS never returns an access key's secret after creation, so an imported
+  # key has none in state — keep the stored value rather than blanking it.
+  lifecycle {
+    ignore_changes = [value]
+  }
 }
 
+# Email goes out through Resend's SMTP relay — the app only speaks generic
+# SMTP (src/services/email.service.ts, nodemailer), so any provider works by
+# changing the smtp_* variables.
 resource "aws_ssm_parameter" "smtp_host" {
   name  = "${local.ssm_prefix}/app/smtp_host"
   type  = "String"
-  value = coalesce(var.smtp_host_override, "email-smtp.${var.aws_region}.amazonaws.com")
+  value = var.smtp_host
 }
 
 resource "aws_ssm_parameter" "smtp_port" {
   name  = "${local.ssm_prefix}/app/smtp_port"
   type  = "String"
-  value = tostring(coalesce(var.smtp_port_override, 587))
+  value = tostring(var.smtp_port)
 }
 
 resource "aws_ssm_parameter" "smtp_user" {
-  name = "${local.ssm_prefix}/app/smtp_user"
-  type = "SecureString"
-  # Explicit != null (not coalesce) so an intentional "" override — e.g. for
-  # an auth-less relay like Mailpit — isn't treated as absent.
-  value = var.smtp_user_override != null ? var.smtp_user_override : aws_iam_access_key.ses_smtp.id
+  name  = "${local.ssm_prefix}/app/smtp_user"
+  type  = "SecureString"
+  value = var.smtp_user
 }
 
-# Placeholder — an IAM access key ID/secret is NOT a valid SMTP password.
-# Convert aws_iam_access_key.ses_smtp.secret into an SMTP password using
-# AWS's documented algorithm (see infra/scripts/ses-smtp-password.sh) and
-# overwrite this parameter once, out of band:
-#   aws ssm put-parameter --name "<name>" --type SecureString --overwrite --value "<converted>"
 resource "aws_ssm_parameter" "smtp_pass" {
   name  = "${local.ssm_prefix}/app/smtp_pass"
   type  = "SecureString"
-  value = "REPLACE_ME_SEE_infra/scripts/ses-smtp-password.sh"
+  value = coalesce(var.smtp_password, "unset")
 
+  # Set out of band (aws ssm put-parameter --overwrite) unless smtp_password
+  # is given — keeps the Resend key out of tfvars/state by default.
   lifecycle {
     ignore_changes = [value]
   }
 }
 
 resource "aws_ssm_parameter" "smtp_from" {
-  name = "${local.ssm_prefix}/app/smtp_from"
-  type = "String"
-  # sender_email is a stopgap for before domain_name is set: SES can't verify
-  # a domain-based identity yet (see ses.tf), so the only way to send real
-  # mail is to verify one individually-owned mailbox as a sender identity
-  # (aws sesv2 create-email-identity) and point smtp_from at it. Note SES
-  # sandbox rules still apply until production access is granted — see
-  # docs/INFRASTRUCTURE.md's SES section — and mail "from" a real personal
-  # mailbox (e.g. a gmail.com address) sent via SES rather than that
-  # provider's own servers commonly fails DMARC/lands in spam at the
-  # recipient, so this is meant to be temporary. Once domain_name is set,
-  # this is ignored in favor of the real no-reply@<domain> identity.
-  value = local.have_domain ? "HomeLink <no-reply@${var.domain_name}>" : (var.sender_email != null ? "HomeLink <${var.sender_email}>" : "HomeLink <no-reply@example.com>")
+  name  = "${local.ssm_prefix}/app/smtp_from"
+  type  = "String"
+  value = "HomeLink <${local.smtp_from_address}>"
 }
 
 # ---------------------------------------------------------------------------

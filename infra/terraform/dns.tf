@@ -51,54 +51,6 @@ resource "cloudflare_record" "jenkins" {
   ttl     = 1
 }
 
-# --- SES domain verification (must be DNS-only, never proxied) -------------
-
-resource "cloudflare_record" "ses_verification" {
-  count   = local.manage_dns ? 1 : 0
-  zone_id = var.cloudflare_zone_id
-  name    = "_amazonses.${var.domain_name}"
-  type    = "TXT"
-  content = aws_ses_domain_identity.app[0].verification_token
-  proxied = false
-  ttl     = 300
-}
-
-resource "cloudflare_record" "ses_dkim" {
-  count   = local.manage_dns ? 3 : 0
-  zone_id = var.cloudflare_zone_id
-  name    = "${aws_ses_domain_dkim.app[0].dkim_tokens[count.index]}._domainkey"
-  type    = "CNAME"
-  content = "${aws_ses_domain_dkim.app[0].dkim_tokens[count.index]}.dkim.amazonses.com"
-  proxied = false
-  ttl     = 300
-}
-
-# --- SES custom MAIL FROM domain (mail.<domain_name>) -----------------------
-# Required by SES for aws_ses_domain_mail_from in ses.tf: an MX record so
-# bounces route back to SES, and an SPF TXT record so the envelope-from
-# aligns for DMARC. See docs/... note in ses.tf for why this matters.
-
-resource "cloudflare_record" "ses_mail_from_mx" {
-  count    = local.manage_dns ? 1 : 0
-  zone_id  = var.cloudflare_zone_id
-  name     = "mail.${var.domain_name}"
-  type     = "MX"
-  content  = "feedback-smtp.${var.aws_region}.amazonses.com"
-  priority = 10
-  proxied  = false
-  ttl      = 300
-}
-
-resource "cloudflare_record" "ses_mail_from_spf" {
-  count   = local.manage_dns ? 1 : 0
-  zone_id = var.cloudflare_zone_id
-  name    = "mail.${var.domain_name}"
-  type    = "TXT"
-  content = "v=spf1 include:amazonses.com ~all"
-  proxied = false
-  ttl     = 300
-}
-
 # --- DMARC ------------------------------------------------------------------
 # p=none: monitor-only. We don't have an inbox to receive aggregate reports
 # at yet, so no rua= — the record's presence (and the now-aligned SPF above)
